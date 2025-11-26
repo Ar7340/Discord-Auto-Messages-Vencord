@@ -13,7 +13,10 @@ import { Button, ChannelStore, Menu, NavigationRouter, showToast, Toasts } from 
 const MessageActions = findByPropsLazy("sendMessage");
 
 let intervalId: NodeJS.Timeout | null = null;
+let countdownId: NodeJS.Timeout | null = null;
 let isRunning = false;
+let remainingTime: number = 0;
+let timerElement: HTMLElement | null = null;
 
 function generateNonce(): string {
     return (Date.now() * 4194304).toString();
@@ -23,6 +26,64 @@ function getRandomInterval(): number {
     const min = settings.store.minIntervalSeconds;
     const max = settings.store.maxIntervalSeconds;
     return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function createTimerDisplay() {
+    if (timerElement) return timerElement;
+    
+    const div = document.createElement("div");
+    div.id = "auto-message-timer";
+    div.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 15px 20px;
+        border-radius: 10px;
+        font-weight: bold;
+        font-size: 16px;
+        z-index: 9999;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        display: none;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    `;
+    document.body.appendChild(div);
+    timerElement = div;
+    return div;
+}
+
+function removeTimerDisplay() {
+    if (timerElement) {
+        timerElement.remove();
+        timerElement = null;
+    }
+}
+
+function startCountdown(totalSeconds: number) {
+    if (countdownId) clearInterval(countdownId);
+    
+    remainingTime = totalSeconds;
+    const timerDiv = createTimerDisplay();
+    timerDiv.style.display = "block";
+    
+    const updateTimer = () => {
+        if (timerDiv) {
+            timerDiv.textContent = `⏱️ Next message in: ${remainingTime}s`;
+            timerDiv.style.opacity = remainingTime <= 5 ? "1" : "0.8";
+        }
+        
+        if (remainingTime <= 0) {
+            clearInterval(countdownId!);
+            countdownId = null;
+        } else {
+            remainingTime--;
+        }
+    };
+    
+    updateTimer();
+    countdownId = setInterval(updateTimer, 1000);
 }
 
 const settings = definePluginSettings({
@@ -120,6 +181,8 @@ function startMessageLoop() {
     }
 
     isRunning = true;
+    const timerDiv = createTimerDisplay();
+    timerDiv.style.display = "block";
     
     // Send immediately on start
     sendMessages();
@@ -128,6 +191,8 @@ function startMessageLoop() {
     function scheduleNext() {
         const randomDelay = getRandomInterval();
         console.log(`[AutoMessageSender] Next message in ${randomDelay} seconds...`);
+        startCountdown(randomDelay);
+        
         intervalId = setTimeout(() => {
             sendMessages();
             scheduleNext();
@@ -146,6 +211,12 @@ function stopMessageLoop() {
         intervalId = null;
     }
     
+    if (countdownId) {
+        clearInterval(countdownId);
+        countdownId = null;
+    }
+    
+    removeTimerDisplay();
     isRunning = false;
     showToast("Auto message sender stopped!", Toasts.Type.MESSAGE);
     console.log("[AutoMessageSender] Plugin stopped");
@@ -204,6 +275,7 @@ export default definePlugin({
     
     stop() {
         stopMessageLoop();
+        removeTimerDisplay();
         console.log("[AutoMessageSender] Plugin unloaded");
     },
     
