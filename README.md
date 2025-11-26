@@ -1,105 +1,178 @@
-# AutoMessageSender Plugin
+# AutoMessageSender - Vencord Plugin
 
-A Discord client mod plugin for Vencord that automatically sends a sequence of messages to a specific channel at regular intervals.
-
-## Description
-
-AutoMessageSender allows you to set up automated message sequences that will be sent repeatedly to your target Discord channel. Perfect for reminders, announcements, or regular updates. The plugin provides an intuitive interface directly integrated into Discord's context menus.
+A powerful Discord bot plugin for Vencord that automatically sends customizable message sequences to your target channels at randomized intervals.
 
 ## Features
 
-- **Automated Message Sequences**: Send up to three pre-configured messages in sequence
-- **Customizable Intervals**: Set the time interval between message cycles (in seconds)
-- **Easy Channel Selection**: Quick one-click channel assignment via context menu
-- **Status Monitoring**: Real-time status display showing running state, target channel, and interval settings
-- **Channel Navigation**: Quick jump to your target channel
-- **Error Handling**: Automatic error notifications and graceful failure handling
+✨ **Automated Message Sequences** - Send up to 10 custom messages automatically
+⏱️ **Smart Countdown Timer** - Visual display showing remaining time until next message
+🎲 **Random Intervals** - Configurable random delays between 20-40 seconds (fully customizable)
+🛑 **Easy Control** - Start/stop the plugin with one click
+📍 **Channel Management** - Easily set and navigate to target channels
+⚙️ **Flexible Configuration** - Customize all settings in the plugin panel
+🎯 **Blank Message Filtering** - Leave messages blank to skip them
 
 ## Installation
 
-1. Install Vencord if you haven't already
-2. Place this plugin in your Vencord plugins directory
-3. Enable the plugin in Vencord settings
+1. Open Vencord settings
+2. Navigate to **Plugins** → **Browse community plugins**
+3. Search for **AutoMessageSender**
+4. Click **Install**
+5. Enable the plugin
+
+Or manually:
+```bash
+git clone https://github.com/Ar7340/Discord-Auto-Messages-Vencord ~/.config/Vencord/plugins/AutoMessageSender
+```
 
 ## Usage
 
-### Quick Setup
+### Quick Start
 
-1. Right-click on any Discord channel
-2. Select "Auto Message Sender" → "📍 Set As Target Channel"
-3. Open plugin settings and configure your messages and interval
+1. **Set Target Channel:**
+   - Right-click any channel in your server
+   - Select `Auto Message Sender` → `📍 Set As Target Channel`
+   - Or use the `Set Current Channel` option in settings
 
-### Configuration
+2. **Configure Messages:**
+   - Open Vencord Settings → Plugins → AutoMessageSender
+   - Enter your messages in message fields (1-10 available)
+   - Leave blank fields empty - they'll be ignored
+   - You can use up to 10 messages
 
-Access the plugin settings to customize:
+3. **Set Delay Range:**
+   - Set `Minimum Interval` (default: 20 seconds)
+   - Set `Maximum Interval` (default: 40 seconds)
+   - Messages will be sent at random intervals within this range
 
-- **Channel ID**: The target channel where messages will be sent
-- **Message 1, 2, 3**: The three messages to send in sequence
-- **Interval Seconds**: Wait time (in seconds) between each message cycle
+4. **Start Sending:**
+   - Right-click your target channel
+   - Select `Auto Message Sender` → `▶️ Start Auto Messages`
+   - Watch the countdown timer in the bottom-right corner
 
-### Starting/Stopping
+### Context Menu Options
 
-- Right-click any channel and select "Auto Message Sender" → "▶️ Start Auto Messages"
-- To stop, select "✅ Stop Auto Messages" from the same menu
-- Alternatively, use the context menu status option to view current running state
+Right-click any channel to access:
 
-### Channel Management
+- **▶️ Start Auto Messages** - Begin sending message sequences
+- **✅ Stop Auto Messages** - Stop the current sequence
+- **📍 Set As Target Channel** - Set this channel as your target
+- **🔗 Go To Target Channel** - Navigate to your target channel
+- **Status** - View current status and settings
+- **⚙️ Open Settings** - Access the plugin configuration panel
 
-- **Set As Target Channel**: Right-click channel → "Auto Message Sender" → "📍 Set As Target Channel"
-- **Go To Target Channel**: Quickly navigate to your target channel via the context menu
-- **View Status**: Check running state, target channel, and interval via the status option
+## Configuration
 
-## Plugin Details
+### Plugin Settings
 
-| Property | Value |
-|----------|-------|
-| **Name** | AutoMessageSender |
-| **License** | GPL-3.0-or-later |
-| **Copyright** | Copyright (c) 2024 Vendicated and contributors |
-| **Framework** | Vencord |
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| Channel ID | String | Empty | Target channel ID (auto-filled with "Set Current Channel") |
+| Message 1-10 | String | Varies | Your custom messages (leave blank to skip) |
+| Minimum Interval | Number | 20 | Minimum seconds between message cycles |
+| Maximum Interval | Number | 40 | Maximum seconds between message cycles |
 
-## Author Information
+### Message Configuration
 
-- **Primary Developer**: Vendicated
-- **Contributors**: Vencord community contributors
-- **Plugin Author**: Nobody (Devs.Nobody)
+- **Up to 10 messages** - Configure as many as you need
+- **Flexible** - Leave fields blank to skip them
+- **500ms delay** - Automatic 500ms delay between each message in the sequence
+- **Auto-filtering** - Blank or whitespace-only messages are automatically ignored
 
-## Technical Details
+### Delay Settings
 
-- **Language**: TypeScript/JavaScript
-- **Dependencies**: Vencord API, Discord Webpack modules
-- **Message Format**: Supports standard Discord messages with nonce generation for authenticity
+- **Random Intervals** - Messages sent at random times between your min and max values
+- **Customizable Range** - Set any range you want (e.g., 10-50 seconds, 5-15 seconds)
+- **Live Countdown** - See exactly when the next message will be sent
 
-## How It Works
+## Timer Display
 
-1. Plugin generates a unique nonce for each message to ensure authenticity
-2. Messages are sent sequentially with a 500ms delay between each message
-3. After completing a cycle, the plugin waits for the specified interval before repeating
-4. All actions are logged to the console for debugging purposes
+The plugin shows a beautiful countdown timer in the bottom-right corner of your screen:
+
+- **Real-time Updates** - Updates every second
+- **Auto-hide** - Appears only when running
+- **Visibility** - Becomes more visible when time is under 5 seconds
+
+## Examples
+
+### Example 1: Simple Greeting Sequence
+```
+Message 1: Hello everyone! 👋
+Message 2: How's it going?
+Message 3: Let me know!
+Interval: 30-60 seconds
+```
+
+### Example 2: Announcement Bot
+```
+Message 1: 📢 ANNOUNCEMENT
+Message 2: Daily reminder about our server rules
+Message 3: Please follow all guidelines
+Message 4: Thanks for keeping it civil!
+Interval: 20-40 seconds
+```
+
+### Example 3: Partial Messages (Blank Filtering)
+```
+Message 1: First message
+Message 2: (blank - will be skipped)
+Message 3: Third message
+Message 4: (blank - will be skipped)
+Message 5: Fifth message
+```
 
 ## Troubleshooting
 
-**"Please set a channel ID in plugin settings!"**
-- Go to plugin settings and enter a channel ID, or use the "Set As Target Channel" context menu option
+**Plugin not sending messages?**
+- Ensure you've set a target channel ID
+- Check that your messages aren't blank
+- Verify the bot has permission to send messages in the target channel
 
-**"No messages configured!"**
-- Configure at least one message in the plugin settings
+**Channel ID not saving?**
+- Use the "Set Current Channel" button in settings
+- Or manually enter the channel ID (right-click channel → Copy ID)
 
-**"Failed to send message. Stopping plugin."**
-- Check your network connection and ensure the target channel is still valid
+**Timer not showing?**
+- Ensure the plugin is running
+- Check browser console for errors
 
-## Logs
+**Messages not appearing?**
+- Verify your Discord connection
+- Check that you have message send permissions in the channel
+- Ensure the plugin is enabled in Vencord
 
-The plugin outputs detailed logs to the browser console with the `[AutoMessageSender]` prefix for debugging and monitoring purposes.
+## Developer
 
-## License
-
-This plugin is licensed under the GPL-3.0-or-later license. See the LICENSE file in the root Vencord directory for details.
+**Author:** Ar7340  
+**Discord ID:** 1321782566763892748  
+**Repository:** [GitHub](https://github.com/Ar7340/Discord-Auto-Messages-Vencord)
 
 ## Support
 
-For issues, questions, or feature requests, please refer to the official Vencord repository and community channels.
+Found a bug? Have a feature request? 
+
+- Open an issue on [GitHub](https://github.com/Ar7340/Discord-Auto-Messages-Vencord/issues)
+- Contact the developer on Discord
+- Check the [GitHub discussions](https://github.com/Ar7340/Discord-Auto-Messages-Vencord/discussions)
+
+## License
+
+This plugin is licensed under the GPL-3.0 License - see the LICENSE file for details.
+
+## Disclaimer
+
+⚠️ **Important:** Use this plugin responsibly. Do not use it to spam channels or violate Discord's Terms of Service. The developer is not responsible for account bans or server restrictions resulting from misuse.
+
+## Changelog
+
+### Version 1.0.0
+- Initial release of AutoMessageSender plugin
+- Support for up to 10 custom messages
+- Random interval delays
+- Live countdown timer
+- Context menu integration
+- Full plugin settings panel
 
 ---
 
-**Note**: Use this plugin responsibly and in accordance with Discord's Terms of Service. Excessive automated messaging may violate Discord policies.
+**Happy automating! 🚀**
