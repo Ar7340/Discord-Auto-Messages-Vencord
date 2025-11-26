@@ -19,6 +19,12 @@ function generateNonce(): string {
     return (Date.now() * 4194304).toString();
 }
 
+function getRandomInterval(): number {
+    const min = settings.store.minIntervalSeconds;
+    const max = settings.store.maxIntervalSeconds;
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
 const settings = definePluginSettings({
     channelId: {
         type: OptionType.STRING,
@@ -40,10 +46,15 @@ const settings = definePluginSettings({
         description: "Third message",
         default: "Yo"
     },
-    intervalSeconds: {
+    minIntervalSeconds: {
         type: OptionType.NUMBER,
-        description: "Seconds to wait between message cycles",
-        default: 10
+        description: "Minimum seconds to wait between message cycles",
+        default: 20
+    },
+    maxIntervalSeconds: {
+        type: OptionType.NUMBER,
+        description: "Maximum seconds to wait between message cycles",
+        default: 40
     }
 });
 
@@ -99,7 +110,7 @@ async function sendMessages() {
         }
     }
     
-    console.log(`[AutoMessageSender] Sequence complete. Next cycle in ${settings.store.intervalSeconds} seconds.`);
+    console.log(`[AutoMessageSender] Sequence complete. Next cycle in ${settings.store.minIntervalSeconds}-${settings.store.maxIntervalSeconds} seconds (random).`);
 }
 
 function startMessageLoop() {
@@ -113,10 +124,17 @@ function startMessageLoop() {
     // Send immediately on start
     sendMessages();
     
-    // Then repeat every N seconds
-    intervalId = setInterval(() => {
-        sendMessages();
-    }, settings.store.intervalSeconds * 1000);
+    // Then repeat with random interval
+    function scheduleNext() {
+        const randomDelay = getRandomInterval();
+        console.log(`[AutoMessageSender] Next message in ${randomDelay} seconds...`);
+        intervalId = setTimeout(() => {
+            sendMessages();
+            scheduleNext();
+        }, randomDelay * 1000);
+    }
+    
+    scheduleNext();
     
     showToast("Auto message sender started!", Toasts.Type.SUCCESS);
     console.log("[AutoMessageSender] Plugin started");
@@ -124,7 +142,7 @@ function startMessageLoop() {
 
 function stopMessageLoop() {
     if (intervalId) {
-        clearInterval(intervalId);
+        clearTimeout(intervalId);
         intervalId = null;
     }
     
@@ -149,12 +167,39 @@ function setCurrentChannel() {
 export default definePlugin({
     name: "AutoMessageSender",
     description: "Automatically sends a sequence of messages to a specific channel at regular intervals",
-    authors: [Devs.Nobody],
+    longDescription: "AutoMessageSender allows you to set up automatic message sequences that are sent to a target Discord channel at customizable intervals. Perfect for scheduled announcements, reminders, or automated responses.",
+    authors: [
+        {
+            name: "Ar7340",
+            id: "1321782566763892748"
+        }
+    ],
     settings,
+    
+    // Plugin metadata
+    meta: {
+        authors: [
+            {
+                name: "Ar7340",
+                id: "1321782566763892748"
+            }
+        ],
+        description: "Automatically sends a sequence of messages to a specific channel at regular intervals",
+        version: "1.0.0",
+        source: "https://github.com/Ar7340/Discord-Auto-Messages-Vencord",
+        changelog: [
+            {
+                title: "Version 1.0.0",
+                body: "Initial release of AutoMessageSender plugin"
+            }
+        ]
+    },
     
     start() {
         console.log("[AutoMessageSender] Plugin loaded!");
         console.log("[AutoMessageSender] Right-click any channel to see Auto Message options");
+        console.log("[AutoMessageSender] Developer: Ar7340 | Discord ID: 1321782566763892748");
+        console.log("[AutoMessageSender] Repository: https://github.com/Ar7340/Discord-Auto-Messages-Vencord");
     },
     
     stop() {
@@ -222,7 +267,7 @@ export default definePlugin({
                             const targetChannel = ChannelStore.getChannel(settings.store.channelId);
                             const targetName = targetChannel ? (targetChannel.name || "DM") : "Not set";
                             showToast(
-                                `Status: ${isRunning ? "Running" : "Stopped"}\nTarget: ${targetName}\nInterval: ${settings.store.intervalSeconds}s`,
+                                `Status: ${isRunning ? "Running" : "Stopped"}\nTarget: ${targetName}\nDelay Range: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s`,
                                 Toasts.Type.MESSAGE
                             );
                         }}
