@@ -8,7 +8,7 @@ import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
-import { Button, ChannelStore, Menu, showToast, Toasts } from "@webpack/common";
+import { Button, ChannelStore, Menu, NavigationRouter, showToast, Toasts } from "@webpack/common";
 
 const MessageActions = findByPropsLazy("sendMessage");
 
@@ -190,6 +190,29 @@ export default definePlugin({
                         action={() => {
                             settings.store.channelId = channel.id;
                             showToast(`Target channel set to: ${channel.name || "DM"}`, Toasts.Type.SUCCESS);
+                        }}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-goto-channel"
+                        label="🔗 Go To Target Channel"
+                        disabled={!settings.store.channelId}
+                        action={() => {
+                            const targetChannel = ChannelStore.getChannel(settings.store.channelId);
+                            if (!targetChannel) {
+                                showToast("Target channel not found!", Toasts.Type.FAILURE);
+                                return;
+                            }
+                            
+                            // Navigate to the channel
+                            const guildId = targetChannel.guild_id;
+                            if (guildId) {
+                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId}`);
+                            } else {
+                                // DM channel
+                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId}`);
+                            }
+                            
+                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
                         }}
                     />
                     <Menu.MenuItem
