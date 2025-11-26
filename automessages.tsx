@@ -94,18 +94,53 @@ const settings = definePluginSettings({
     },
     message1: {
         type: OptionType.STRING,
-        description: "First message",
+        description: "Message 1 (leave blank to skip)",
         default: "Hi"
     },
     message2: {
         type: OptionType.STRING,
-        description: "Second message",
+        description: "Message 2 (leave blank to skip)",
         default: "Hello"
     },
     message3: {
         type: OptionType.STRING,
-        description: "Third message",
+        description: "Message 3 (leave blank to skip)",
         default: "Yo"
+    },
+    message4: {
+        type: OptionType.STRING,
+        description: "Message 4 (leave blank to skip)",
+        default: ""
+    },
+    message5: {
+        type: OptionType.STRING,
+        description: "Message 5 (leave blank to skip)",
+        default: ""
+    },
+    message6: {
+        type: OptionType.STRING,
+        description: "Message 6 (leave blank to skip)",
+        default: ""
+    },
+    message7: {
+        type: OptionType.STRING,
+        description: "Message 7 (leave blank to skip)",
+        default: ""
+    },
+    message8: {
+        type: OptionType.STRING,
+        description: "Message 8 (leave blank to skip)",
+        default: ""
+    },
+    message9: {
+        type: OptionType.STRING,
+        description: "Message 9 (leave blank to skip)",
+        default: ""
+    },
+    message10: {
+        type: OptionType.STRING,
+        description: "Message 10 (leave blank to skip)",
+        default: ""
     },
     minIntervalSeconds: {
         type: OptionType.NUMBER,
