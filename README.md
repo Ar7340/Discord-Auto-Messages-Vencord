@@ -165,7 +165,7 @@ This plugin is licensed under the GPL-3.0 License - see the LICENSE file for det
 
 ## Changelog
 
-### Version 1.0.0
+### Version 1.0.1
 - Initial release of AutoMessageSender plugin
 - Support for up to 10 custom messages
 - Random interval delays
