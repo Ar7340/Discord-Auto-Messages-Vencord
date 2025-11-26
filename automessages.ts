@@ -4,45 +4,90 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
-import definePlugin from "@utils/types";
+import definePlugin, { OptionType } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
 import { showToast, Toasts } from "@webpack/common";
 
 const MessageActions = findByPropsLazy("sendMessage");
 
-interface PluginSettings {
-    channelId: string;
-    messages: string[];
-    intervalSeconds: number;
-    isRunning: boolean;
-}
-
 let intervalId: NodeJS.Timeout | null = null;
-let settings: PluginSettings = {
-    channelId: "YOUR_CHANNEL_ID_HERE", // Replace with your channel ID
-    messages: ["Hi", "Hello", "Yo"],
-    intervalSeconds: 10,
-    isRunning: false
-};
+let isRunning = false;
 
 function generateNonce(): string {
     return (Date.now() * 4194304).toString();
 }
 
+const settings = definePluginSettings({
+    channelId: {
+        type: OptionType.STRING,
+        description: "Channel ID to send messages to (Right-click channel → Copy ID)",
+        default: ""
+    },
+    message1: {
+        type: OptionType.STRING,
+        description: "First message",
+        default: "Hi"
+    },
+    message2: {
+        type: OptionType.STRING,
+        description: "Second message",
+        default: "Hello"
+    },
+    message3: {
+        type: OptionType.STRING,
+        description: "Third message",
+        default: "Yo"
+    },
+    intervalSeconds: {
+        type: OptionType.NUMBER,
+        description: "Seconds to wait between message cycles",
+        default: 10
+    },
+    enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable auto message sender",
+        default: false,
+        onChange: (value: boolean) => {
+            if (value) {
+                startMessageLoop();
+            } else {
+                stopMessageLoop();
+            }
+        }
+    }
+});
+
 async function sendMessages() {
-    if (!settings.channelId || settings.channelId === "YOUR_CHANNEL_ID_HERE") {
-        showToast("Please set a valid channel ID in the plugin settings!", Toasts.Type.FAILURE);
+    const channelId = settings.store.channelId;
+    
+    if (!channelId) {
+        showToast("Please set a channel ID in plugin settings!", Toasts.Type.FAILURE);
+        settings.store.enabled = false;
+        stopMessageLoop();
+        return;
+    }
+
+    const messages = [
+        settings.store.message1,
+        settings.store.message2,
+        settings.store.message3
+    ].filter(msg => msg && msg.trim() !== "");
+
+    if (messages.length === 0) {
+        showToast("No messages configured!", Toasts.Type.FAILURE);
+        settings.store.enabled = false;
         stopMessageLoop();
         return;
     }
 
     console.log("[AutoMessageSender] Sending message sequence...");
     
-    for (const message of settings.messages) {
+    for (const message of messages) {
         try {
             await MessageActions.sendMessage(
-                settings.channelId,
+                channelId,
                 {
                     content: message,
                     tts: false,
@@ -57,25 +102,27 @@ async function sendMessages() {
             console.log(`[AutoMessageSender] Sent: "${message}"`);
             
             // Small delay between messages (500ms)
-            if (message !== settings.messages[settings.messages.length - 1]) {
+            if (message !== messages[messages.length - 1]) {
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
         } catch (error) {
             console.error("[AutoMessageSender] Error sending message:", error);
-            showToast("Failed to send message. Check console for details.", Toasts.Type.FAILURE);
+            showToast("Failed to send message. Stopping plugin.", Toasts.Type.FAILURE);
+            settings.store.enabled = false;
+            stopMessageLoop();
+            return;
         }
     }
     
-    console.log(`[AutoMessageSender] Sequence complete. Next cycle in ${settings.intervalSeconds} seconds.`);
+    console.log(`[AutoMessageSender] Sequence complete. Next cycle in ${settings.store.intervalSeconds} seconds.`);
 }
 
 function startMessageLoop() {
-    if (intervalId) {
-        showToast("Auto message sender is already running!", Toasts.Type.MESSAGE);
+    if (intervalId || isRunning) {
         return;
     }
 
-    settings.isRunning = true;
+    isRunning = true;
     
     // Send immediately on start
     sendMessages();
@@ -83,7 +130,7 @@ function startMessageLoop() {
     // Then repeat every N seconds
     intervalId = setInterval(() => {
         sendMessages();
-    }, settings.intervalSeconds * 1000);
+    }, settings.store.intervalSeconds * 1000);
     
     showToast("Auto message sender started!", Toasts.Type.SUCCESS);
     console.log("[AutoMessageSender] Plugin started");
@@ -95,7 +142,7 @@ function stopMessageLoop() {
         intervalId = null;
     }
     
-    settings.isRunning = false;
+    isRunning = false;
     showToast("Auto message sender stopped!", Toasts.Type.MESSAGE);
     console.log("[AutoMessageSender] Plugin stopped");
 }
@@ -104,45 +151,20 @@ export default definePlugin({
     name: "AutoMessageSender",
     description: "Automatically sends a sequence of messages to a specific channel at regular intervals",
     authors: [Devs.Nobody],
+    settings,
     
     start() {
-        console.log("[AutoMessageSender] Plugin loaded. Use commands to control:");
-        console.log("  - startAutoMessages() to start");
-        console.log("  - stopAutoMessages() to stop");
-        console.log("  - setChannelId('channelId') to set target channel");
-        console.log("  - setMessages(['msg1', 'msg2', 'msg3']) to customize messages");
-        console.log("  - setMessageInterval(seconds) to change delay between cycles");
+        console.log("[AutoMessageSender] Plugin loaded!");
+        console.log("[AutoMessageSender] Configure in: Settings → Vencord → Plugins → AutoMessageSender");
         
-        // Expose functions globally for easy access via console
-        (window as any).startAutoMessages = startMessageLoop;
-        (window as any).stopAutoMessages = stopMessageLoop;
-        (window as any).setChannelId = (id: string) => {
-            settings.channelId = id;
-            console.log(`[AutoMessageSender] Channel ID set to: ${id}`);
-            showToast(`Channel ID updated!`, Toasts.Type.SUCCESS);
-        };
-        (window as any).setMessages = (messages: string[]) => {
-            settings.messages = messages;
-            console.log(`[AutoMessageSender] Messages updated:`, messages);
-            showToast(`Messages updated!`, Toasts.Type.SUCCESS);
-        };
-        (window as any).setMessageInterval = (seconds: number) => {
-            settings.intervalSeconds = seconds;
-            console.log(`[AutoMessageSender] Interval set to: ${seconds} seconds`);
-            showToast(`Interval updated to ${seconds}s!`, Toasts.Type.SUCCESS);
-        };
+        // If enabled in settings, start automatically
+        if (settings.store.enabled) {
+            startMessageLoop();
+        }
     },
     
     stop() {
         stopMessageLoop();
-        
-        // Clean up global functions
-        delete (window as any).startAutoMessages;
-        delete (window as any).stopAutoMessages;
-        delete (window as any).setChannelId;
-        delete (window as any).setMessages;
-        delete (window as any).setMessageInterval;
-        
         console.log("[AutoMessageSender] Plugin unloaded");
     }
 });
