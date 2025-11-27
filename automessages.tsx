@@ -18,6 +18,11 @@ let isRunning = false;
 let remainingTime: number = 0;
 let timerElement: HTMLElement | null = null;
 
+// Alert system variables
+let alertAudio: { stop: () => void } | null = null;
+let alertButton: HTMLElement | null = null;
+let isAlertActive = false;
+
 function generateNonce(): string {
     return (Date.now() * 4194304).toString();
 }
@@ -59,6 +64,213 @@ function removeTimerDisplay() {
         timerElement.remove();
         timerElement = null;
     }
+}
+
+function createAlertButton() {
+    if (alertButton) return alertButton;
+    
+    const button = document.createElement("div");
+    button.id = "verification-alert-button";
+    button.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
+        color: white;
+        padding: 30px 50px;
+        border-radius: 15px;
+        font-weight: bold;
+        font-size: 24px;
+        z-index: 99999;
+        box-shadow: 0 8px 30px rgba(255, 0, 0, 0.5);
+        border: 3px solid rgba(255, 255, 255, 0.5);
+        cursor: pointer;
+        display: none;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        text-align: center;
+        animation: pulse 1s infinite;
+        user-select: none;
+    `;
+    
+    button.innerHTML = `
+        <div style="font-size: 48px; margin-bottom: 10px;">⚠️</div>
+        <div style="margin-bottom: 10px;">VERIFICATION ALERT!</div>
+        <div style="font-size: 18px; margin-bottom: 5px;">Someone received a verification message!</div>
+        <div style="font-size: 16px; opacity: 0.9;">Click to Stop Sound</div>
+    `;
+    
+    // Add pulsing animation
+    const style = document.createElement("style");
+    style.textContent = `
+        @keyframes pulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+        }
+    `;
+    document.head.appendChild(style);
+    
+    button.addEventListener("click", stopAlert);
+    
+    document.body.appendChild(button);
+    alertButton = button;
+    return button;
+}
+
+function removeAlertButton() {
+    if (alertButton) {
+        alertButton.remove();
+        alertButton = null;
+    }
+}
+
+function playAlertSound() {
+    // Create an alert sound using Web Audio API that loops continuously
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    
+    let currentOscillator: OscillatorNode | null = null;
+    
+    const playBeep = () => {
+        if (!isAlertActive) return;
+        
+        // Create new oscillator for each beep
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.value = 800; // High-pitched alert
+        oscillator.type = "sine";
+        
+        const now = audioContext.currentTime;
+        const beepDuration = 0.2;
+        
+        // Fade in and out for smoother sound
+        gainNode.gain.setValueAtTime(0, now);
+        gainNode.gain.linearRampToValueAtTime(0.3, now + 0.05);
+        gainNode.gain.linearRampToValueAtTime(0, now + beepDuration);
+        
+        oscillator.start(now);
+        oscillator.stop(now + beepDuration);
+        
+        currentOscillator = oscillator;
+        
+        // Schedule next beep - will continue indefinitely until manually stopped
+        if (isAlertActive) {
+            setTimeout(playBeep, 400); // 200ms beep + 200ms pause = 400ms total
+        }
+    };
+    
+    // Start the beeping loop
+    playBeep();
+    
+    // Return a stop function
+    return {
+        stop: () => {
+            isAlertActive = false;
+            if (currentOscillator) {
+                try {
+                    currentOscillator.stop();
+                } catch (e) {
+                    // Already stopped
+                }
+            }
+        }
+    };
+}
+
+function triggerAlert() {
+    if (isAlertActive) return; // Don't trigger multiple alerts
+    
+    console.log("[AutoMessageSender] 🚨 VERIFICATION MESSAGE DETECTED IN CHANNEL! 🚨");
+    console.log("[AutoMessageSender] Someone in the channel received a verification warning!");
+    
+    isAlertActive = true;
+    
+    // Stop auto message sender
+    if (isRunning) {
+        stopMessageLoop();
+        console.log("[AutoMessageSender] Auto-messages stopped due to verification alert");
+    }
+    
+    // Play alert sound (loops continuously until manually stopped)
+    alertAudio = playAlertSound();
+    
+    // Show alert button
+    const button = createAlertButton();
+    button.style.display = "block";
+    
+    // Show toast notification
+    showToast("⚠️ VERIFICATION DETECTED! Click the alert button to stop sound.", Toasts.Type.FAILURE);
+}
+
+function stopAlert() {
+    if (!isAlertActive) return;
+    
+    console.log("[AutoMessageSender] Alert manually stopped by user");
+    
+    isAlertActive = false;
+    
+    // Stop sound using the stop function
+    if (alertAudio && typeof alertAudio.stop === 'function') {
+        alertAudio.stop();
+        alertAudio = null;
+    }
+    
+    // Hide alert button
+    if (alertButton) {
+        alertButton.style.display = "none";
+    }
+    
+    showToast("Alert dismissed. Please complete verification!", Toasts.Type.MESSAGE);
+}
+
+function checkForVerificationMessage(message: any): boolean {
+    if (!message.content) return false;
+    
+    const content = message.content.toLowerCase();
+    // Remove zero-width spaces, special unicode characters, and extra spaces
+    const cleanContent = content.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ");
+    
+    // Check for the specific verification message patterns
+    const verificationPhrases = [
+        "are you a real human",
+        "please use the link below so i can check",
+        "please complete this within",
+        "minutes or it may result in a ban",
+        "may result in a ban"
+    ];
+    
+    // Check for warning indicators
+    const hasWarningEmoji = content.includes("⚠️") || content.includes("⚠") || content.includes("warning");
+    
+    // Check if message mentions someone and asks about being human
+    const mentionPattern = /<@[!&]?\d+>/; // Discord mention pattern
+    const hasMention = mentionPattern.test(content);
+    const asksAboutHuman = cleanContent.includes("are you a real human") || 
+                           cleanContent.includes("are you areal human") ||
+                           cleanContent.includes("areyou a real human");
+    
+    // Check for "Verify" button/link indicator
+    const hasVerifyButton = content.includes("verify") || cleanContent.includes("verify");
+    
+    // Check if at least 2 verification phrases are present
+    const phraseMatches = verificationPhrases.filter(phrase => 
+        cleanContent.includes(phrase.replace(/\s+/g, ""))
+    ).length;
+    
+    // Strong indicators of verification message:
+    // 1. Has warning emoji AND asks about being human
+    // 2. Has warning emoji AND multiple verification phrases
+    // 3. Has mention AND asks about human AND has warning
+    const isVerificationMessage = 
+        (hasWarningEmoji && asksAboutHuman) ||
+        (hasWarningEmoji && phraseMatches >= 2) ||
+        (hasMention && asksAboutHuman && hasWarningEmoji) ||
+        (hasWarningEmoji && cleanContent.includes("complete this within") && cleanContent.includes("minutes"));
+    
+    return isVerificationMessage;
 }
 
 function startCountdown(totalSeconds: number) {
@@ -151,6 +363,11 @@ const settings = definePluginSettings({
         type: OptionType.NUMBER,
         description: "Maximum seconds to wait between message cycles",
         default: 40
+    },
+    enableVerificationDetection: {
+        type: OptionType.BOOLEAN,
+        description: "Enable automatic detection of verification messages",
+        default: true
     }
 });
 
@@ -166,7 +383,14 @@ async function sendMessages() {
     const messages = [
         settings.store.message1,
         settings.store.message2,
-        settings.store.message3
+        settings.store.message3,
+        settings.store.message4,
+        settings.store.message5,
+        settings.store.message6,
+        settings.store.message7,
+        settings.store.message8,
+        settings.store.message9,
+        settings.store.message10
     ].filter(msg => msg && msg.trim() !== "");
 
     if (messages.length === 0) {
@@ -272,8 +496,8 @@ function setCurrentChannel() {
 
 export default definePlugin({
     name: "AutoMessageSender",
-    description: "Automatically sends a sequence of messages to a specific channel at regular intervals",
-    longDescription: "AutoMessageSender allows you to set up automatic message sequences that are sent to a target Discord channel at customizable intervals. Perfect for scheduled announcements, reminders, or automated responses.",
+    description: "Automatically sends a sequence of messages to a specific channel at regular intervals with verification detection",
+    longDescription: "AutoMessageSender allows you to set up automatic message sequences that are sent to a target Discord channel at customizable intervals. Includes automatic detection of verification messages with sound alerts.",
     authors: [
         {
             name: "Ar7340",
@@ -282,35 +506,38 @@ export default definePlugin({
     ],
     settings,
     
-    // Plugin metadata
-    meta: {
-        authors: [
-            {
-                name: "Ar7340",
-                id: "1321782566763892748"
+    flux: {
+        MESSAGE_CREATE({ message }: { message: any }) {
+            if (!settings.store.enableVerificationDetection) return;
+            
+            // Monitor the target channel for ANY verification messages (not just for the user)
+            if (message.channel_id === settings.store.channelId) {
+                if (checkForVerificationMessage(message)) {
+                    console.log("[AutoMessageSender] Verification message detected in channel:");
+                    console.log(`[AutoMessageSender] From: ${message.author?.username || "Unknown"}`);
+                    console.log(`[AutoMessageSender] Content: ${message.content}`);
+                    triggerAlert();
+                }
             }
-        ],
-        description: "Automatically sends a sequence of messages to a specific channel at regular intervals",
-        version: "1.0.0",
-        source: "https://github.com/Ar7340/Discord-Auto-Messages-Vencord",
-        changelog: [
-            {
-                title: "Version 1.0.0",
-                body: "Initial release of AutoMessageSender plugin"
-            }
-        ]
+        }
     },
     
     start() {
         console.log("[AutoMessageSender] Plugin loaded!");
+        console.log("[AutoMessageSender] Verification detection enabled");
         console.log("[AutoMessageSender] Right-click any channel to see Auto Message options");
         console.log("[AutoMessageSender] Developer: Ar7340 | Discord ID: 1321782566763892748");
         console.log("[AutoMessageSender] Repository: https://github.com/Ar7340/Discord-Auto-Messages-Vencord");
+        
+        // Create alert button (hidden by default)
+        createAlertButton();
     },
     
     stop() {
         stopMessageLoop();
         removeTimerDisplay();
+        stopAlert();
+        removeAlertButton();
         console.log("[AutoMessageSender] Plugin unloaded");
     },
     
@@ -355,12 +582,10 @@ export default definePlugin({
                                 return;
                             }
                             
-                            // Navigate to the channel
                             const guildId = targetChannel.guild_id;
                             if (guildId) {
                                 NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId}`);
                             } else {
-                                // DM channel
                                 NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId}`);
                             }
                             
@@ -374,17 +599,23 @@ export default definePlugin({
                             const targetChannel = ChannelStore.getChannel(settings.store.channelId);
                             const targetName = targetChannel ? (targetChannel.name || "DM") : "Not set";
                             showToast(
-                                `Status: ${isRunning ? "Running" : "Stopped"}\nTarget: ${targetName}\nDelay Range: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s`,
+                                `Status: ${isRunning ? "Running" : "Stopped"}\nTarget: ${targetName}\nDelay Range: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s\nVerification Detection: ${settings.store.enableVerificationDetection ? "ON" : "OFF"}`,
                                 Toasts.Type.MESSAGE
                             );
                         }}
                     />
                     <Menu.MenuSeparator />
                     <Menu.MenuItem
+                        id="auto-message-test-alert"
+                        label="🔔 Test Verification Alert"
+                        action={() => {
+                            triggerAlert();
+                        }}
+                    />
+                    <Menu.MenuItem
                         id="auto-message-settings"
                         label="⚙️ Open Settings"
                         action={() => {
-                            // Open Vencord settings
                             const settingsButton = document.querySelector('[aria-label="User Settings"]') as HTMLElement;
                             settingsButton?.click();
                             setTimeout(() => {
