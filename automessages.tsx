@@ -14,9 +14,13 @@ const MessageActions = findByPropsLazy("sendMessage");
 
 let intervalId: NodeJS.Timeout | null = null;
 let countdownId: NodeJS.Timeout | null = null;
+let channelRotationId: NodeJS.Timeout | null = null;
 let isRunning = false;
 let remainingTime: number = 0;
 let timerElement: HTMLElement | null = null;
+let currentChannelIndex: number = 0;
+let channelRotationTimer: number = 0;
+let channelRotationCountdownId: NodeJS.Timeout | null = null;
 
 // Alert system variables
 let alertAudio: { stop: () => void } | null = null;
@@ -31,6 +35,73 @@ function getRandomInterval(): number {
     const min = settings.store.minIntervalSeconds;
     const max = settings.store.maxIntervalSeconds;
     return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function getRandomChannelRotationInterval(): number {
+    const min = settings.store.minChannelRotationMinutes * 60;
+    const max = settings.store.maxChannelRotationMinutes * 60;
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function getActiveChannels(): string[] {
+    return [
+        settings.store.channelId1,
+        settings.store.channelId2,
+        settings.store.channelId3,
+        settings.store.channelId4,
+        settings.store.channelId5
+    ].filter(id => id && id.trim() !== "");
+}
+
+function getCurrentChannelId(): string {
+    const channels = getActiveChannels();
+    if (channels.length === 0) return "";
+    return channels[currentChannelIndex % channels.length];
+}
+
+function rotateChannel() {
+    const channels = getActiveChannels();
+    if (channels.length <= 1) return; // No rotation needed for 0 or 1 channel
+    
+    currentChannelIndex = (currentChannelIndex + 1) % channels.length;
+    const newChannelId = getCurrentChannelId();
+    const channel = ChannelStore.getChannel(newChannelId);
+    const channelName = channel ? (channel.name || "DM") : newChannelId;
+    
+    console.log(`[AutoMessageSender] 🔄 Rotated to channel ${currentChannelIndex + 1}/${channels.length}: ${channelName}`);
+    showToast(`🔄 Switched to channel: ${channelName}`, Toasts.Type.MESSAGE);
+    
+    // Schedule next rotation
+    scheduleChannelRotation();
+}
+
+function scheduleChannelRotation() {
+    if (channelRotationId) {
+        clearTimeout(channelRotationId);
+    }
+    
+    if (channelRotationCountdownId) {
+        clearInterval(channelRotationCountdownId);
+    }
+    
+    const channels = getActiveChannels();
+    if (channels.length <= 1) return; // No rotation needed
+    
+    const rotationSeconds = getRandomChannelRotationInterval();
+    channelRotationTimer = rotationSeconds;
+    
+    console.log(`[AutoMessageSender] Next channel rotation in ${Math.floor(rotationSeconds / 60)} minutes ${rotationSeconds % 60} seconds`);
+    
+    // Start countdown for channel rotation
+    channelRotationCountdownId = setInterval(() => {
+        if (channelRotationTimer > 0) {
+            channelRotationTimer--;
+        }
+    }, 1000);
+    
+    channelRotationId = setTimeout(() => {
+        rotateChannel();
+    }, rotationSeconds * 1000);
 }
 
 function createTimerDisplay() {
@@ -282,7 +353,22 @@ function startCountdown(totalSeconds: number) {
     
     const updateTimer = () => {
         if (timerDiv) {
-            timerDiv.textContent = `⏱️ Next message in: ${remainingTime}s`;
+            const channels = getActiveChannels();
+            const currentChannel = ChannelStore.getChannel(getCurrentChannelId());
+            const channelName = currentChannel ? (currentChannel.name || "DM") : "Unknown";
+            
+            // Format channel rotation time
+            const rotationMinutes = Math.floor(channelRotationTimer / 60);
+            const rotationSeconds = channelRotationTimer % 60;
+            const rotationTime = channels.length > 1 
+                ? `${rotationMinutes}:${rotationSeconds.toString().padStart(2, '0')}`
+                : "N/A";
+            
+            timerDiv.innerHTML = `
+                ⏱️ Next message in: ${remainingTime}s<br>
+                <span style="font-size: 12px; opacity: 0.8;">Channel: ${channelName} (${currentChannelIndex + 1}/${channels.length})</span><br>
+                <span style="font-size: 11px; opacity: 0.7;">Channel switch in: ${rotationTime}</span>
+            `;
             timerDiv.style.opacity = remainingTime <= 5 ? "1" : "0.8";
         }
         
@@ -299,10 +385,40 @@ function startCountdown(totalSeconds: number) {
 }
 
 const settings = definePluginSettings({
-    channelId: {
+    channelId1: {
         type: OptionType.STRING,
-        description: "Channel ID to send messages to (Right-click channel → Copy ID, or use 'Set Current Channel' button)",
+        description: "Channel ID 1 (Right-click channel → Copy ID)",
         default: ""
+    },
+    channelId2: {
+        type: OptionType.STRING,
+        description: "Channel ID 2 (Optional)",
+        default: ""
+    },
+    channelId3: {
+        type: OptionType.STRING,
+        description: "Channel ID 3 (Optional)",
+        default: ""
+    },
+    channelId4: {
+        type: OptionType.STRING,
+        description: "Channel ID 4 (Optional)",
+        default: ""
+    },
+    channelId5: {
+        type: OptionType.STRING,
+        description: "Channel ID 5 (Optional)",
+        default: ""
+    },
+    minChannelRotationMinutes: {
+        type: OptionType.NUMBER,
+        description: "Minimum minutes before rotating to next channel",
+        default: 10
+    },
+    maxChannelRotationMinutes: {
+        type: OptionType.NUMBER,
+        description: "Maximum minutes before rotating to next channel",
+        default: 20
     },
     message1: {
         type: OptionType.STRING,
@@ -372,10 +488,10 @@ const settings = definePluginSettings({
 });
 
 async function sendMessages() {
-    const channelId = settings.store.channelId;
+    const channelId = getCurrentChannelId();
     
     if (!channelId) {
-        showToast("Please set a channel ID in plugin settings!", Toasts.Type.FAILURE);
+        showToast("Please set at least one channel ID in plugin settings!", Toasts.Type.FAILURE);
         stopMessageLoop();
         return;
     }
@@ -399,7 +515,9 @@ async function sendMessages() {
         return;
     }
 
-    console.log("[AutoMessageSender] Sending message sequence...");
+    const channel = ChannelStore.getChannel(channelId);
+    const channelName = channel ? (channel.name || "DM") : channelId;
+    console.log(`[AutoMessageSender] Sending message sequence to: ${channelName}...`);
     
     for (const message of messages) {
         try {
@@ -439,12 +557,25 @@ function startMessageLoop() {
         return;
     }
 
+    const channels = getActiveChannels();
+    if (channels.length === 0) {
+        showToast("Please configure at least one channel ID!", Toasts.Type.FAILURE);
+        return;
+    }
+
     isRunning = true;
+    currentChannelIndex = 0;
+    
     const timerDiv = createTimerDisplay();
     timerDiv.style.display = "block";
     
     // Send immediately on start
     sendMessages();
+    
+    // Schedule channel rotation if multiple channels
+    if (channels.length > 1) {
+        scheduleChannelRotation();
+    }
     
     // Then repeat with random interval
     function scheduleNext() {
@@ -460,8 +591,13 @@ function startMessageLoop() {
     
     scheduleNext();
     
-    showToast("Auto message sender started!", Toasts.Type.SUCCESS);
-    console.log("[AutoMessageSender] Plugin started");
+    const channelList = channels.map((id, i) => {
+        const ch = ChannelStore.getChannel(id);
+        return `${i + 1}. ${ch ? (ch.name || "DM") : id}`;
+    }).join(", ");
+    
+    showToast(`Auto message sender started! Rotating between ${channels.length} channel(s)`, Toasts.Type.SUCCESS);
+    console.log(`[AutoMessageSender] Plugin started with ${channels.length} channels: ${channelList}`);
 }
 
 function stopMessageLoop() {
@@ -475,13 +611,23 @@ function stopMessageLoop() {
         countdownId = null;
     }
     
+    if (channelRotationId) {
+        clearTimeout(channelRotationId);
+        channelRotationId = null;
+    }
+    
+    if (channelRotationCountdownId) {
+        clearInterval(channelRotationCountdownId);
+        channelRotationCountdownId = null;
+    }
+    
     removeTimerDisplay();
     isRunning = false;
     showToast("Auto message sender stopped!", Toasts.Type.MESSAGE);
     console.log("[AutoMessageSender] Plugin stopped");
 }
 
-function setCurrentChannel() {
+function setCurrentChannel(channelNumber: number) {
     const currentChannel = ChannelStore.getChannel(ChannelStore.getLastSelectedChannelId());
     
     if (!currentChannel) {
@@ -489,15 +635,16 @@ function setCurrentChannel() {
         return;
     }
     
-    settings.store.channelId = currentChannel.id;
-    showToast(`Channel set to: ${currentChannel.name || "DM"}`, Toasts.Type.SUCCESS);
-    console.log(`[AutoMessageSender] Channel set to: ${currentChannel.name} (${currentChannel.id})`);
+    const settingKey = `channelId${channelNumber}` as keyof typeof settings.store;
+    settings.store[settingKey] = currentChannel.id;
+    showToast(`Channel ${channelNumber} set to: ${currentChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+    console.log(`[AutoMessageSender] Channel ${channelNumber} set to: ${currentChannel.name} (${currentChannel.id})`);
 }
 
 export default definePlugin({
     name: "AutoMessageSender",
-    description: "Automatically sends a sequence of messages to a specific channel at regular intervals with verification detection",
-    longDescription: "AutoMessageSender allows you to set up automatic message sequences that are sent to a target Discord channel at customizable intervals. Includes automatic detection of verification messages with sound alerts.",
+    description: "Automatically sends a sequence of messages to multiple channels with rotation and verification detection",
+    longDescription: "AutoMessageSender allows you to set up automatic message sequences that are sent to up to 5 target Discord channels with automatic rotation every 10-20 minutes. Includes verification message detection with sound alerts.",
     authors: [
         {
             name: "Ar7340",
@@ -510,8 +657,9 @@ export default definePlugin({
         MESSAGE_CREATE({ message }: { message: any }) {
             if (!settings.store.enableVerificationDetection) return;
             
-            // Monitor the target channel for ANY verification messages (not just for the user)
-            if (message.channel_id === settings.store.channelId) {
+            // Monitor all configured channels for verification messages
+            const channels = getActiveChannels();
+            if (channels.includes(message.channel_id)) {
                 if (checkForVerificationMessage(message)) {
                     console.log("[AutoMessageSender] Verification message detected in channel:");
                     console.log(`[AutoMessageSender] From: ${message.author?.username || "Unknown"}`);
@@ -525,6 +673,7 @@ export default definePlugin({
     start() {
         console.log("[AutoMessageSender] Plugin loaded!");
         console.log("[AutoMessageSender] Verification detection enabled");
+        console.log("[AutoMessageSender] Supports up to 5 channels with automatic rotation");
         console.log("[AutoMessageSender] Right-click any channel to see Auto Message options");
         console.log("[AutoMessageSender] Developer: Ar7340 | Discord ID: 1321782566763892748");
         console.log("[AutoMessageSender] Repository: https://github.com/Ar7340/Discord-Auto-Messages-Vencord");
@@ -563,45 +712,161 @@ export default definePlugin({
                             }
                         }}
                     />
+                    <Menu.MenuSeparator />
                     <Menu.MenuItem
-                        id="auto-message-set-channel"
-                        label="📍 Set As Target Channel"
-                        action={() => {
-                            settings.store.channelId = channel.id;
-                            showToast(`Target channel set to: ${channel.name || "DM"}`, Toasts.Type.SUCCESS);
-                        }}
+                        id="auto-message-set-channel-1"
+                        label="📍 Set As Channel 1"
+                        action={() => setCurrentChannel(1)}
                     />
                     <Menu.MenuItem
-                        id="auto-message-goto-channel"
-                        label="🔗 Go To Target Channel"
-                        disabled={!settings.store.channelId}
+                        id="auto-message-set-channel-2"
+                        label="📍 Set As Channel 2"
+                        action={() => setCurrentChannel(2)}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-set-channel-3"
+                        label="📍 Set As Channel 3"
+                        action={() => setCurrentChannel(3)}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-set-channel-4"
+                        label="📍 Set As Channel 4"
+                        action={() => setCurrentChannel(4)}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-set-channel-5"
+                        label="📍 Set As Channel 5"
+                        action={() => setCurrentChannel(5)}
+                    />
+                    <Menu.MenuSeparator />
+                    <Menu.MenuItem
+                        id="auto-message-goto-channel-1"
+                        label="🔗 Go To Channel 1"
+                        disabled={!settings.store.channelId1}
                         action={() => {
-                            const targetChannel = ChannelStore.getChannel(settings.store.channelId);
+                            const targetChannel = ChannelStore.getChannel(settings.store.channelId1);
                             if (!targetChannel) {
-                                showToast("Target channel not found!", Toasts.Type.FAILURE);
+                                showToast("Channel 1 not found!", Toasts.Type.FAILURE);
                                 return;
                             }
                             
                             const guildId = targetChannel.guild_id;
                             if (guildId) {
-                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId}`);
+                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId1}`);
                             } else {
-                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId}`);
+                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId1}`);
                             }
                             
                             showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
                         }}
                     />
                     <Menu.MenuItem
+                        id="auto-message-goto-channel-2"
+                        label="🔗 Go To Channel 2"
+                        disabled={!settings.store.channelId2}
+                        action={() => {
+                            const targetChannel = ChannelStore.getChannel(settings.store.channelId2);
+                            if (!targetChannel) {
+                                showToast("Channel 2 not found!", Toasts.Type.FAILURE);
+                                return;
+                            }
+                            
+                            const guildId = targetChannel.guild_id;
+                            if (guildId) {
+                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId2}`);
+                            } else {
+                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId2}`);
+                            }
+                            
+                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+                        }}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-goto-channel-3"
+                        label="🔗 Go To Channel 3"
+                        disabled={!settings.store.channelId3}
+                        action={() => {
+                            const targetChannel = ChannelStore.getChannel(settings.store.channelId3);
+                            if (!targetChannel) {
+                                showToast("Channel 3 not found!", Toasts.Type.FAILURE);
+                                return;
+                            }
+                            
+                            const guildId = targetChannel.guild_id;
+                            if (guildId) {
+                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId3}`);
+                            } else {
+                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId3}`);
+                            }
+                            
+                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+                        }}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-goto-channel-4"
+                        label="🔗 Go To Channel 4"
+                        disabled={!settings.store.channelId4}
+                        action={() => {
+                            const targetChannel = ChannelStore.getChannel(settings.store.channelId4);
+                            if (!targetChannel) {
+                                showToast("Channel 4 not found!", Toasts.Type.FAILURE);
+                                return;
+                            }
+                            
+                            const guildId = targetChannel.guild_id;
+                            if (guildId) {
+                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId4}`);
+                            } else {
+                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId4}`);
+                            }
+                            
+                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+                        }}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-goto-channel-5"
+                        label="🔗 Go To Channel 5"
+                        disabled={!settings.store.channelId5}
+                        action={() => {
+                            const targetChannel = ChannelStore.getChannel(settings.store.channelId5);
+                            if (!targetChannel) {
+                                showToast("Channel 5 not found!", Toasts.Type.FAILURE);
+                                return;
+                            }
+                            
+                            const guildId = targetChannel.guild_id;
+                            if (guildId) {
+                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId5}`);
+                            } else {
+                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId5}`);
+                            }
+                            
+                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+                        }}
+                    />
+                    <Menu.MenuSeparator />
+                    <Menu.MenuItem
                         id="auto-message-status"
                         label={`Status: ${isRunning ? "🟢 Running" : "🔴 Stopped"}`}
                         action={() => {
-                            const targetChannel = ChannelStore.getChannel(settings.store.channelId);
-                            const targetName = targetChannel ? (targetChannel.name || "DM") : "Not set";
+                            const channels = getActiveChannels();
+                            const channelList = channels.map((id, i) => {
+                                const ch = ChannelStore.getChannel(id);
+                                return `${i + 1}. ${ch ? (ch.name || "DM") : id}`;
+                            }).join("\n");
+                            
                             showToast(
-                                `Status: ${isRunning ? "Running" : "Stopped"}\nTarget: ${targetName}\nDelay Range: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s\nVerification Detection: ${settings.store.enableVerificationDetection ? "ON" : "OFF"}`,
+                                `Status: ${isRunning ? "Running" : "Stopped"}\nChannels (${channels.length}):\n${channelList || "None set"}\nMessage Delay: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s\nRotation: ${settings.store.minChannelRotationMinutes}-${settings.store.maxChannelRotationMinutes} min\nVerification Detection: ${settings.store.enableVerificationDetection ? "ON" : "OFF"}`,
                                 Toasts.Type.MESSAGE
                             );
+                        }}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-rotate-now"
+                        label="🔄 Rotate Channel Now"
+                        disabled={!isRunning || getActiveChannels().length <= 1}
+                        action={() => {
+                            rotateChannel();
                         }}
                     />
                     <Menu.MenuSeparator />
