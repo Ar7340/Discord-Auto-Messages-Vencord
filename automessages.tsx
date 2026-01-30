@@ -8,7 +8,7 @@ import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
-import { Button, ChannelStore, Menu, NavigationRouter, showToast, Toasts } from "@webpack/common";
+import { Button, ChannelStore, GuildStore, Menu, NavigationRouter, showToast, Toasts } from "@webpack/common";
 
 const MessageActions = findByPropsLazy("sendMessage");
 
@@ -44,13 +44,33 @@ function getRandomChannelRotationInterval(): number {
 }
 
 function getActiveChannels(): string[] {
-    return [
-        settings.store.channelId1,
-        settings.store.channelId2,
-        settings.store.channelId3,
-        settings.store.channelId4,
-        settings.store.channelId5
-    ].filter(id => id && id.trim() !== "");
+    const channels = [
+        { id: settings.store.channelId1, enabled: settings.store.channel1Enabled },
+        { id: settings.store.channelId2, enabled: settings.store.channel2Enabled },
+        { id: settings.store.channelId3, enabled: settings.store.channel3Enabled },
+        { id: settings.store.channelId4, enabled: settings.store.channel4Enabled },
+        { id: settings.store.channelId5, enabled: settings.store.channel5Enabled }
+    ];
+    
+    return channels
+        .filter(ch => ch.enabled && ch.id && ch.id.trim() !== "")
+        .map(ch => ch.id);
+}
+
+function getChannelDisplayName(channelId: string): string {
+    const channel = ChannelStore.getChannel(channelId);
+    if (!channel) return channelId;
+    
+    const channelName = channel.name || "DM";
+    const guildId = channel.guild_id;
+    
+    if (guildId) {
+        const guild = GuildStore.getGuild(guildId);
+        const guildName = guild ? guild.name : "Unknown Server";
+        return `${channelName} (${guildName})`;
+    }
+    
+    return channelName;
 }
 
 function getCurrentChannelId(): string {
@@ -65,11 +85,10 @@ function rotateChannel() {
     
     currentChannelIndex = (currentChannelIndex + 1) % channels.length;
     const newChannelId = getCurrentChannelId();
-    const channel = ChannelStore.getChannel(newChannelId);
-    const channelName = channel ? (channel.name || "DM") : newChannelId;
+    const displayName = getChannelDisplayName(newChannelId);
     
-    console.log(`[AutoMessageSender] 🔄 Rotated to channel ${currentChannelIndex + 1}/${channels.length}: ${channelName}`);
-    showToast(`🔄 Switched to channel: ${channelName}`, Toasts.Type.MESSAGE);
+    console.log(`[AutoMessageSender] 🔄 Rotated to channel ${currentChannelIndex + 1}/${channels.length}: ${displayName}`);
+    showToast(`🔄 Switched to: ${displayName}`, Toasts.Type.MESSAGE);
     
     // Schedule next rotation
     scheduleChannelRotation();
@@ -354,8 +373,8 @@ function startCountdown(totalSeconds: number) {
     const updateTimer = () => {
         if (timerDiv) {
             const channels = getActiveChannels();
-            const currentChannel = ChannelStore.getChannel(getCurrentChannelId());
-            const channelName = currentChannel ? (currentChannel.name || "DM") : "Unknown";
+            const currentChannelId = getCurrentChannelId();
+            const displayName = getChannelDisplayName(currentChannelId);
             
             // Format channel rotation time
             const rotationMinutes = Math.floor(channelRotationTimer / 60);
@@ -366,8 +385,8 @@ function startCountdown(totalSeconds: number) {
             
             timerDiv.innerHTML = `
                 ⏱️ Next message in: ${remainingTime}s<br>
-                <span style="font-size: 12px; opacity: 0.8;">Channel: ${channelName} (${currentChannelIndex + 1}/${channels.length})</span><br>
-                <span style="font-size: 11px; opacity: 0.7;">Channel switch in: ${rotationTime}</span>
+                <span style="font-size: 12px; opacity: 0.8;">${displayName}</span><br>
+                <span style="font-size: 11px; opacity: 0.7;">Channel ${currentChannelIndex + 1}/${channels.length} | Switch in: ${rotationTime}</span>
             `;
             timerDiv.style.opacity = remainingTime <= 5 ? "1" : "0.8";
         }
@@ -390,25 +409,50 @@ const settings = definePluginSettings({
         description: "Channel ID 1 (Right-click channel → Copy ID)",
         default: ""
     },
+    channel1Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 1",
+        default: true
+    },
     channelId2: {
         type: OptionType.STRING,
         description: "Channel ID 2 (Optional)",
         default: ""
+    },
+    channel2Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 2",
+        default: true
     },
     channelId3: {
         type: OptionType.STRING,
         description: "Channel ID 3 (Optional)",
         default: ""
     },
+    channel3Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 3",
+        default: true
+    },
     channelId4: {
         type: OptionType.STRING,
         description: "Channel ID 4 (Optional)",
         default: ""
     },
+    channel4Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 4",
+        default: true
+    },
     channelId5: {
         type: OptionType.STRING,
         description: "Channel ID 5 (Optional)",
         default: ""
+    },
+    channel5Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 5",
+        default: true
     },
     minChannelRotationMinutes: {
         type: OptionType.NUMBER,
@@ -491,7 +535,7 @@ async function sendMessages() {
     const channelId = getCurrentChannelId();
     
     if (!channelId) {
-        showToast("Please set at least one channel ID in plugin settings!", Toasts.Type.FAILURE);
+        showToast("No enabled channels configured!", Toasts.Type.FAILURE);
         stopMessageLoop();
         return;
     }
@@ -515,9 +559,8 @@ async function sendMessages() {
         return;
     }
 
-    const channel = ChannelStore.getChannel(channelId);
-    const channelName = channel ? (channel.name || "DM") : channelId;
-    console.log(`[AutoMessageSender] Sending message sequence to: ${channelName}...`);
+    const displayName = getChannelDisplayName(channelId);
+    console.log(`[AutoMessageSender] Sending message sequence to: ${displayName}...`);
     
     for (const message of messages) {
         try {
@@ -534,7 +577,7 @@ async function sendMessages() {
                     nonce: generateNonce()
                 }
             );
-            console.log(`[AutoMessageSender] Sent: "${message}"`);
+            console.log(`[AutoMessageSender] ✓ Sent to ${displayName}: "${message}"`);
             
             // Small delay between messages (500ms)
             if (message !== messages[messages.length - 1]) {
@@ -559,7 +602,7 @@ function startMessageLoop() {
 
     const channels = getActiveChannels();
     if (channels.length === 0) {
-        showToast("Please configure at least one channel ID!", Toasts.Type.FAILURE);
+        showToast("Please enable at least one channel!", Toasts.Type.FAILURE);
         return;
     }
 
@@ -592,12 +635,11 @@ function startMessageLoop() {
     scheduleNext();
     
     const channelList = channels.map((id, i) => {
-        const ch = ChannelStore.getChannel(id);
-        return `${i + 1}. ${ch ? (ch.name || "DM") : id}`;
+        return `${i + 1}. ${getChannelDisplayName(id)}`;
     }).join(", ");
     
-    showToast(`Auto message sender started! Rotating between ${channels.length} channel(s)`, Toasts.Type.SUCCESS);
-    console.log(`[AutoMessageSender] Plugin started with ${channels.length} channels: ${channelList}`);
+    showToast(`Auto sender started! ${channels.length} enabled channel(s)`, Toasts.Type.SUCCESS);
+    console.log(`[AutoMessageSender] Plugin started with ${channels.length} enabled channels: ${channelList}`);
 }
 
 function stopMessageLoop() {
@@ -637,14 +679,35 @@ function setCurrentChannel(channelNumber: number) {
     
     const settingKey = `channelId${channelNumber}` as keyof typeof settings.store;
     settings.store[settingKey] = currentChannel.id;
-    showToast(`Channel ${channelNumber} set to: ${currentChannel.name || "DM"}`, Toasts.Type.SUCCESS);
-    console.log(`[AutoMessageSender] Channel ${channelNumber} set to: ${currentChannel.name} (${currentChannel.id})`);
+    
+    const displayName = getChannelDisplayName(currentChannel.id);
+    showToast(`Channel ${channelNumber} set to: ${displayName}`, Toasts.Type.SUCCESS);
+    console.log(`[AutoMessageSender] Channel ${channelNumber} set to: ${displayName} (${currentChannel.id})`);
+}
+
+function toggleChannel(channelNumber: number) {
+    const enableKey = `channel${channelNumber}Enabled` as keyof typeof settings.store;
+    const channelIdKey = `channelId${channelNumber}` as keyof typeof settings.store;
+    const channelId = settings.store[channelIdKey] as string;
+    
+    if (!channelId || channelId.trim() === "") {
+        showToast(`Channel ${channelNumber} is not configured!`, Toasts.Type.FAILURE);
+        return;
+    }
+    
+    const currentValue = settings.store[enableKey] as boolean;
+    settings.store[enableKey] = !currentValue;
+    
+    const displayName = getChannelDisplayName(channelId);
+    const status = !currentValue ? "enabled" : "disabled";
+    showToast(`Channel ${channelNumber} ${status}: ${displayName}`, Toasts.Type.SUCCESS);
+    console.log(`[AutoMessageSender] Channel ${channelNumber} ${status}: ${displayName}`);
 }
 
 export default definePlugin({
     name: "AutoMessageSender",
     description: "Automatically sends a sequence of messages to multiple channels with rotation and verification detection",
-    longDescription: "AutoMessageSender allows you to set up automatic message sequences that are sent to up to 5 target Discord channels with automatic rotation every 10-20 minutes. Includes verification message detection with sound alerts.",
+    longDescription: "AutoMessageSender allows you to set up automatic message sequences that are sent to up to 5 target Discord channels with automatic rotation every 10-20 minutes. Includes verification message detection with sound alerts and individual channel enable/disable toggles.",
     authors: [
         {
             name: "Ar7340",
@@ -673,7 +736,7 @@ export default definePlugin({
     start() {
         console.log("[AutoMessageSender] Plugin loaded!");
         console.log("[AutoMessageSender] Verification detection enabled");
-        console.log("[AutoMessageSender] Supports up to 5 channels with automatic rotation");
+        console.log("[AutoMessageSender] Supports up to 5 channels with enable/disable toggles");
         console.log("[AutoMessageSender] Right-click any channel to see Auto Message options");
         console.log("[AutoMessageSender] Developer: Ar7340 | Discord ID: 1321782566763892748");
         console.log("[AutoMessageSender] Repository: https://github.com/Ar7340/Discord-Auto-Messages-Vencord");
@@ -719,9 +782,21 @@ export default definePlugin({
                         action={() => setCurrentChannel(1)}
                     />
                     <Menu.MenuItem
+                        id="auto-message-toggle-channel-1"
+                        label={`${settings.store.channel1Enabled ? "✅" : "❌"} Toggle Channel 1`}
+                        disabled={!settings.store.channelId1}
+                        action={() => toggleChannel(1)}
+                    />
+                    <Menu.MenuItem
                         id="auto-message-set-channel-2"
                         label="📍 Set As Channel 2"
                         action={() => setCurrentChannel(2)}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-toggle-channel-2"
+                        label={`${settings.store.channel2Enabled ? "✅" : "❌"} Toggle Channel 2`}
+                        disabled={!settings.store.channelId2}
+                        action={() => toggleChannel(2)}
                     />
                     <Menu.MenuItem
                         id="auto-message-set-channel-3"
@@ -729,14 +804,32 @@ export default definePlugin({
                         action={() => setCurrentChannel(3)}
                     />
                     <Menu.MenuItem
+                        id="auto-message-toggle-channel-3"
+                        label={`${settings.store.channel3Enabled ? "✅" : "❌"} Toggle Channel 3`}
+                        disabled={!settings.store.channelId3}
+                        action={() => toggleChannel(3)}
+                    />
+                    <Menu.MenuItem
                         id="auto-message-set-channel-4"
                         label="📍 Set As Channel 4"
                         action={() => setCurrentChannel(4)}
                     />
                     <Menu.MenuItem
+                        id="auto-message-toggle-channel-4"
+                        label={`${settings.store.channel4Enabled ? "✅" : "❌"} Toggle Channel 4`}
+                        disabled={!settings.store.channelId4}
+                        action={() => toggleChannel(4)}
+                    />
+                    <Menu.MenuItem
                         id="auto-message-set-channel-5"
                         label="📍 Set As Channel 5"
                         action={() => setCurrentChannel(5)}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-toggle-channel-5"
+                        label={`${settings.store.channel5Enabled ? "✅" : "❌"} Toggle Channel 5`}
+                        disabled={!settings.store.channelId5}
+                        action={() => toggleChannel(5)}
                     />
                     <Menu.MenuSeparator />
                     <Menu.MenuItem
@@ -757,7 +850,7 @@ export default definePlugin({
                                 NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId1}`);
                             }
                             
-                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId1)}`, Toasts.Type.SUCCESS);
                         }}
                     />
                     <Menu.MenuItem
@@ -778,7 +871,7 @@ export default definePlugin({
                                 NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId2}`);
                             }
                             
-                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId2)}`, Toasts.Type.SUCCESS);
                         }}
                     />
                     <Menu.MenuItem
@@ -799,7 +892,7 @@ export default definePlugin({
                                 NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId3}`);
                             }
                             
-                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId3)}`, Toasts.Type.SUCCESS);
                         }}
                     />
                     <Menu.MenuItem
@@ -820,7 +913,7 @@ export default definePlugin({
                                 NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId4}`);
                             }
                             
-                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId4)}`, Toasts.Type.SUCCESS);
                         }}
                     />
                     <Menu.MenuItem
@@ -841,7 +934,7 @@ export default definePlugin({
                                 NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId5}`);
                             }
                             
-                            showToast(`Navigating to: ${targetChannel.name || "DM"}`, Toasts.Type.SUCCESS);
+                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId5)}`, Toasts.Type.SUCCESS);
                         }}
                     />
                     <Menu.MenuSeparator />
@@ -851,12 +944,24 @@ export default definePlugin({
                         action={() => {
                             const channels = getActiveChannels();
                             const channelList = channels.map((id, i) => {
-                                const ch = ChannelStore.getChannel(id);
-                                return `${i + 1}. ${ch ? (ch.name || "DM") : id}`;
+                                return `${i + 1}. ${getChannelDisplayName(id)}`;
+                            }).join("\n");
+                            
+                            const allChannels = [
+                                { id: settings.store.channelId1, enabled: settings.store.channel1Enabled, num: 1 },
+                                { id: settings.store.channelId2, enabled: settings.store.channel2Enabled, num: 2 },
+                                { id: settings.store.channelId3, enabled: settings.store.channel3Enabled, num: 3 },
+                                { id: settings.store.channelId4, enabled: settings.store.channel4Enabled, num: 4 },
+                                { id: settings.store.channelId5, enabled: settings.store.channel5Enabled, num: 5 }
+                            ].filter(ch => ch.id && ch.id.trim() !== "");
+                            
+                            const statusList = allChannels.map(ch => {
+                                const status = ch.enabled ? "✅" : "❌";
+                                return `${status} Ch ${ch.num}: ${getChannelDisplayName(ch.id)}`;
                             }).join("\n");
                             
                             showToast(
-                                `Status: ${isRunning ? "Running" : "Stopped"}\nChannels (${channels.length}):\n${channelList || "None set"}\nMessage Delay: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s\nRotation: ${settings.store.minChannelRotationMinutes}-${settings.store.maxChannelRotationMinutes} min\nVerification Detection: ${settings.store.enableVerificationDetection ? "ON" : "OFF"}`,
+                                `Status: ${isRunning ? "Running" : "Stopped"}\n\n${statusList || "No channels configured"}\n\nMessage Delay: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s\nRotation: ${settings.store.minChannelRotationMinutes}-${settings.store.maxChannelRotationMinutes} min\nVerification Detection: ${settings.store.enableVerificationDetection ? "ON" : "OFF"}`,
                                 Toasts.Type.MESSAGE
                             );
                         }}
