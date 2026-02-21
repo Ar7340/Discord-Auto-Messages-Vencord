@@ -26,6 +26,9 @@ let channelRotationCountdownId: NodeJS.Timeout | null = null;
 let alertAudio: { stop: () => void } | null = null;
 let alertButton: HTMLElement | null = null;
 let isAlertActive = false;
+let isPaused = false;
+let alertDetectedUserId: string = "";
+let alertSoundStopped = false; // tracks whether sound was already stopped (1st click done)
 
 function generateNonce(): string {
     return (Date.now() * 4194304).toString();
@@ -45,13 +48,18 @@ function getRandomChannelRotationInterval(): number {
 
 function getActiveChannels(): string[] {
     const channels = [
-        { id: settings.store.channelId1, enabled: settings.store.channel1Enabled },
-        { id: settings.store.channelId2, enabled: settings.store.channel2Enabled },
-        { id: settings.store.channelId3, enabled: settings.store.channel3Enabled },
-        { id: settings.store.channelId4, enabled: settings.store.channel4Enabled },
-        { id: settings.store.channelId5, enabled: settings.store.channel5Enabled }
+        { id: settings.store.channelId1,  enabled: settings.store.channel1Enabled  },
+        { id: settings.store.channelId2,  enabled: settings.store.channel2Enabled  },
+        { id: settings.store.channelId3,  enabled: settings.store.channel3Enabled  },
+        { id: settings.store.channelId4,  enabled: settings.store.channel4Enabled  },
+        { id: settings.store.channelId5,  enabled: settings.store.channel5Enabled  },
+        { id: settings.store.channelId6,  enabled: settings.store.channel6Enabled  },
+        { id: settings.store.channelId7,  enabled: settings.store.channel7Enabled  },
+        { id: settings.store.channelId8,  enabled: settings.store.channel8Enabled  },
+        { id: settings.store.channelId9,  enabled: settings.store.channel9Enabled  },
+        { id: settings.store.channelId10, enabled: settings.store.channel10Enabled }
     ];
-    
+
     return channels
         .filter(ch => ch.enabled && ch.id && ch.id.trim() !== "")
         .map(ch => ch.id);
@@ -158,7 +166,7 @@ function removeTimerDisplay() {
 
 function createAlertButton() {
     if (alertButton) return alertButton;
-    
+
     const button = document.createElement("div");
     button.id = "verification-alert-button";
     button.style.cssText = `
@@ -182,14 +190,15 @@ function createAlertButton() {
         animation: pulse 1s infinite;
         user-select: none;
     `;
-    
+
     button.innerHTML = `
         <div style="font-size: 48px; margin-bottom: 10px;">⚠️</div>
         <div style="margin-bottom: 10px;">VERIFICATION ALERT!</div>
-        <div style="font-size: 18px; margin-bottom: 5px;">Someone received a verification message!</div>
-        <div style="font-size: 16px; opacity: 0.9;">Click to Stop Sound</div>
+        <div style="font-size: 18px; margin-bottom: 5px;" id="alert-user-line">Someone received a verification message!</div>
+        <div style="font-size: 16px; opacity: 0.9; margin-bottom: 8px;" id="alert-action-line">🔊 Click once to stop sound</div>
+        <div style="font-size: 13px; opacity: 0.7;" id="alert-hint-line">Then click again to dismiss & resume</div>
     `;
-    
+
     // Add pulsing animation
     const style = document.createElement("style");
     style.textContent = `
@@ -197,11 +206,48 @@ function createAlertButton() {
             0%, 100% { transform: translate(-50%, -50%) scale(1); }
             50% { transform: translate(-50%, -50%) scale(1.05); }
         }
+        @keyframes pulse-muted {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.02); }
+        }
     `;
     document.head.appendChild(style);
-    
-    button.addEventListener("click", stopAlert);
-    
+
+    // Two-stage click handler
+    button.addEventListener("click", () => {
+        if (!alertSoundStopped) {
+            // ── FIRST CLICK: stop sound only ──────────────────────────────
+            alertSoundStopped = true;
+
+            // Stop the beep loop and audio
+            isAlertActive = false; // prevents playBeep from scheduling more beeps
+            if (alertAudio && typeof alertAudio.stop === "function") {
+                alertAudio.stop();
+                alertAudio = null;
+            }
+
+            // Update button visuals to show sound is off, waiting for 2nd click
+            button.style.background = "linear-gradient(135deg, #e67e22 0%, #b35c00 100%)";
+            button.style.boxShadow = "0 8px 30px rgba(230, 126, 34, 0.5)";
+            button.style.animation = "pulse-muted 1.5s infinite";
+
+            const iconDiv = button.querySelector("div:first-child") as HTMLElement;
+            if (iconDiv) iconDiv.textContent = "🔕";
+
+            const actionLine = button.querySelector("#alert-action-line") as HTMLElement;
+            if (actionLine) actionLine.textContent = "✅ Sound stopped — click again to resume";
+
+            const hintLine = button.querySelector("#alert-hint-line") as HTMLElement;
+            if (hintLine) hintLine.style.opacity = "0";
+
+            showToast("🔕 Sound stopped. Click the button again to dismiss & resume.", Toasts.Type.MESSAGE);
+            console.log("[AutoMessageSender] Alert sound stopped (1st click). Waiting for 2nd click to resume.");
+        } else {
+            // ── SECOND CLICK: dismiss and resume ─────────────────────────
+            stopAlert();
+        }
+    });
+
     document.body.appendChild(button);
     alertButton = button;
     return button;
@@ -270,97 +316,189 @@ function playAlertSound() {
     };
 }
 
-function triggerAlert() {
+function triggerAlert(detectedUserId: string = "", detectedUsername: string = "") {
     if (isAlertActive) return; // Don't trigger multiple alerts
-    
+
     console.log("[AutoMessageSender] 🚨 VERIFICATION MESSAGE DETECTED IN CHANNEL! 🚨");
     console.log("[AutoMessageSender] Someone in the channel received a verification warning!");
-    
-    isAlertActive = true;
-    
-    // Stop auto message sender
-    if (isRunning) {
-        stopMessageLoop();
-        console.log("[AutoMessageSender] Auto-messages stopped due to verification alert");
+    if (detectedUserId) {
+        console.log(`[AutoMessageSender] Detected user ID: ${detectedUserId}`);
     }
-    
+
+    isAlertActive = true;
+    alertDetectedUserId = detectedUserId;
+    alertSoundStopped = false; // reset for new alert
+
+    // PAUSE auto message sender (don't fully stop — we'll resume after dismissal)
+    if (isRunning) {
+        isPaused = true;
+        if (intervalId) {
+            clearTimeout(intervalId);
+            intervalId = null;
+        }
+        if (countdownId) {
+            clearInterval(countdownId);
+            countdownId = null;
+        }
+        if (channelRotationId) {
+            clearTimeout(channelRotationId);
+            channelRotationId = null;
+        }
+        if (channelRotationCountdownId) {
+            clearInterval(channelRotationCountdownId);
+            channelRotationCountdownId = null;
+        }
+        if (timerElement) {
+            timerElement.style.background = "linear-gradient(135deg, #ff6b35 0%, #cc0000 100%)";
+            timerElement.innerHTML = `⏸️ PAUSED — Verification detected!<br><span style="font-size: 12px; opacity: 0.8;">Dismiss the alert to resume</span>`;
+        }
+        console.log("[AutoMessageSender] Auto-messages PAUSED due to verification alert");
+    }
+
     // Play alert sound (loops continuously until manually stopped)
     alertAudio = playAlertSound();
-    
-    // Show alert button
+
+    // Show alert button with detected user info
     const button = createAlertButton();
+    const userLine = button.querySelector("#alert-user-line") as HTMLElement;
+    if (userLine) {
+        if (detectedUserId && detectedUsername && detectedUsername !== "Unknown") {
+            userLine.textContent = `⚠️ ${detectedUsername} (${detectedUserId}) received a verification!`;
+        } else if (detectedUserId) {
+            userLine.textContent = `⚠️ User ${detectedUserId} received a verification!`;
+        } else if (detectedUsername && detectedUsername !== "Unknown") {
+            userLine.textContent = `⚠️ ${detectedUsername} received a verification!`;
+        } else {
+            userLine.textContent = "Someone received a verification message!";
+        }
+    }
     button.style.display = "block";
-    
-    // Show toast notification
-    showToast("⚠️ VERIFICATION DETECTED! Click the alert button to stop sound.", Toasts.Type.FAILURE);
+
+    // Build toast text
+    const who = detectedUsername && detectedUsername !== "Unknown"
+        ? `${detectedUsername}${detectedUserId ? ` (${detectedUserId})` : ""}`
+        : detectedUserId || "Unknown user";
+
+    showToast(
+        `⚠️ VERIFICATION DETECTED! ${who} — Auto-messages PAUSED. Dismiss alert to resume.`,
+        Toasts.Type.FAILURE
+    );
 }
 
 function stopAlert() {
-    if (!isAlertActive) return;
-    
-    console.log("[AutoMessageSender] Alert manually stopped by user");
-    
+    // Can be called directly (test alert, plugin stop) or via 2nd click after sound already stopped
+    const wasActive = isAlertActive || alertSoundStopped;
+    if (!wasActive && !isPaused) return;
+
+    console.log("[AutoMessageSender] Alert dismissed (2nd click / direct call)");
+
     isAlertActive = false;
-    
-    // Stop sound using the stop function
-    if (alertAudio && typeof alertAudio.stop === 'function') {
+    alertSoundStopped = false;
+    alertDetectedUserId = "";
+
+    // Stop sound if somehow still playing (e.g. called directly from test alert)
+    if (alertAudio && typeof alertAudio.stop === "function") {
         alertAudio.stop();
         alertAudio = null;
     }
-    
-    // Hide alert button
+
+    // Hide alert button and reset its visuals for next time
     if (alertButton) {
         alertButton.style.display = "none";
+        // Reset button to red for next alert
+        alertButton.style.background = "linear-gradient(135deg, #ff0000 0%, #cc0000 100%)";
+        alertButton.style.boxShadow = "0 8px 30px rgba(255, 0, 0, 0.5)";
+        alertButton.style.animation = "pulse 1s infinite";
+        const iconDiv = alertButton.querySelector("div:first-child") as HTMLElement;
+        if (iconDiv) iconDiv.textContent = "⚠️";
+        const actionLine = alertButton.querySelector("#alert-action-line") as HTMLElement;
+        if (actionLine) actionLine.textContent = "🔊 Click once to stop sound";
+        const hintLine = alertButton.querySelector("#alert-hint-line") as HTMLElement;
+        if (hintLine) hintLine.style.opacity = "0.7";
     }
-    
-    showToast("Alert dismissed. Please complete verification!", Toasts.Type.MESSAGE);
+
+    // Resume auto-messages if they were paused
+    if (isPaused && isRunning) {
+        isPaused = false;
+
+        // Restore timer display color
+        if (timerElement) {
+            timerElement.style.background = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+        }
+
+        // Resume the message loop scheduling
+        const resumeLoop = () => {
+            const randomDelay = getRandomInterval();
+            console.log(`[AutoMessageSender] Resuming — next message in ${randomDelay} seconds...`);
+            startCountdown(randomDelay);
+            intervalId = setTimeout(() => {
+                sendMessages();
+                resumeLoop();
+            }, randomDelay * 1000);
+        };
+
+        // Reschedule channel rotation if needed
+        const channels = getActiveChannels();
+        if (channels.length > 1) {
+            scheduleChannelRotation();
+        }
+
+        resumeLoop();
+        showToast("✅ Alert dismissed — auto-messages RESUMED!", Toasts.Type.SUCCESS);
+        console.log("[AutoMessageSender] Auto-messages resumed after alert dismissal");
+    } else {
+        isPaused = false;
+        showToast("Alert dismissed.", Toasts.Type.MESSAGE);
+    }
 }
 
-function checkForVerificationMessage(message: any): boolean {
-    if (!message.content) return false;
-    
-    const content = message.content.toLowerCase();
-    // Remove zero-width spaces, special unicode characters, and extra spaces
-    const cleanContent = content.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ");
-    
-    // Check for the specific verification message patterns
-    const verificationPhrases = [
-        "are you a real human",
-        "please use the link below so i can check",
-        "please complete this within",
-        "minutes or it may result in a ban",
-        "may result in a ban"
-    ];
-    
-    // Check for warning indicators
-    const hasWarningEmoji = content.includes("⚠️") || content.includes("⚠") || content.includes("warning");
-    
-    // Check if message mentions someone and asks about being human
-    const mentionPattern = /<@[!&]?\d+>/; // Discord mention pattern
-    const hasMention = mentionPattern.test(content);
-    const asksAboutHuman = cleanContent.includes("are you a real human") || 
-                           cleanContent.includes("are you areal human") ||
-                           cleanContent.includes("areyou a real human");
-    
-    // Check for "Verify" button/link indicator
-    const hasVerifyButton = content.includes("verify") || cleanContent.includes("verify");
-    
-    // Check if at least 2 verification phrases are present
-    const phraseMatches = verificationPhrases.filter(phrase => 
-        cleanContent.includes(phrase.replace(/\s+/g, ""))
-    ).length;
-    
-    // Strong indicators of verification message:
-    // 1. Has warning emoji AND asks about being human
-    // 2. Has warning emoji AND multiple verification phrases
-    // 3. Has mention AND asks about human AND has warning
-    const isVerificationMessage = 
-        (hasWarningEmoji && asksAboutHuman) ||
-        (hasWarningEmoji && phraseMatches >= 2) ||
-        (hasMention && asksAboutHuman && hasWarningEmoji) ||
-        (hasWarningEmoji && cleanContent.includes("complete this within") && cleanContent.includes("minutes"));
-    
-    return isVerificationMessage;
+function checkForVerificationMessage(message: any): { detected: boolean; userId: string } {
+    if (!message.content) return { detected: false, userId: "" };
+
+    const raw = message.content;
+    // Strip zero-width chars, then collapse whitespace for clean matching
+    const clean = raw.replace(/[\u200B-\u200D\uFEFF\u00AD]/g, "").replace(/\s+/g, " ").toLowerCase();
+
+    let userId = "";
+
+    // Try to extract mentioned user ID from the message (<@USERID> or <@!USERID>)
+    const mentionMatch = raw.match(/<@!?(\d+)>/);
+    if (mentionMatch) {
+        userId = mentionMatch[1];
+    }
+
+    // ─── Pattern 1 ──────────────────────────────────────────────────────────
+    // "⚠️ | <@USER>, are you a real human? Please use the link below so I can check!
+    //  | Please complete this within 10 minutes or it may result in a ban!"
+    const isHumanCheck =
+        (raw.includes("⚠️") || raw.includes("⚠")) &&
+        clean.includes("are you a real human") &&
+        clean.includes("please use the link below") &&
+        (clean.includes("complete this within") || clean.includes("may result in a ban"));
+
+    // ─── Pattern 2 ──────────────────────────────────────────────────────────
+    // "| @Roster! Please complete your captcha to verify that you are human! (1/5)" ... "(5/5)"
+    const isCaptchaCheck =
+        clean.includes("please complete your captcha") &&
+        clean.includes("verify that you are human") &&
+        /\(\d\/\d\)/.test(clean); // matches (1/5) through (5/5)
+
+    // ─── Fallback broad patterns ─────────────────────────────────────────────
+    const isBroadMatch =
+        ((raw.includes("⚠️") || raw.includes("⚠")) &&
+            (clean.includes("are you a real human") ||
+                (clean.includes("complete this within") && clean.includes("minutes"))));
+
+    const detected = isHumanCheck || isCaptchaCheck || isBroadMatch;
+
+    // For captcha pattern, try to extract user from @mention text if no <@ID> found
+    if (detected && !userId) {
+        // Try numeric ID anywhere in message as fallback
+        const numericMatch = raw.match(/\b(\d{17,20})\b/);
+        if (numericMatch) userId = numericMatch[1];
+    }
+
+    return { detected, userId };
 }
 
 function startCountdown(totalSeconds: number) {
@@ -406,7 +544,7 @@ function startCountdown(totalSeconds: number) {
 const settings = definePluginSettings({
     channelId1: {
         type: OptionType.STRING,
-        description: "Channel ID 1 (Right-click channel → Copy ID)",
+        description: "Channel ID 1 (use ➕ Add in right-click menu)",
         default: ""
     },
     channel1Enabled: {
@@ -452,6 +590,56 @@ const settings = definePluginSettings({
     channel5Enabled: {
         type: OptionType.BOOLEAN,
         description: "Enable Channel 5",
+        default: true
+    },
+    channelId6: {
+        type: OptionType.STRING,
+        description: "Channel ID 6 (Optional)",
+        default: ""
+    },
+    channel6Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 6",
+        default: true
+    },
+    channelId7: {
+        type: OptionType.STRING,
+        description: "Channel ID 7 (Optional)",
+        default: ""
+    },
+    channel7Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 7",
+        default: true
+    },
+    channelId8: {
+        type: OptionType.STRING,
+        description: "Channel ID 8 (Optional)",
+        default: ""
+    },
+    channel8Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 8",
+        default: true
+    },
+    channelId9: {
+        type: OptionType.STRING,
+        description: "Channel ID 9 (Optional)",
+        default: ""
+    },
+    channel9Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 9",
+        default: true
+    },
+    channelId10: {
+        type: OptionType.STRING,
+        description: "Channel ID 10 (Optional)",
+        default: ""
+    },
+    channel10Enabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Channel 10",
         default: true
     },
     minChannelRotationMinutes: {
@@ -669,20 +857,54 @@ function stopMessageLoop() {
     console.log("[AutoMessageSender] Plugin stopped");
 }
 
-function setCurrentChannel(channelNumber: number) {
+function addCurrentChannel() {
     const currentChannel = ChannelStore.getChannel(ChannelStore.getLastSelectedChannelId());
-    
+
     if (!currentChannel) {
         showToast("No channel selected!", Toasts.Type.FAILURE);
         return;
     }
-    
-    const settingKey = `channelId${channelNumber}` as keyof typeof settings.store;
-    settings.store[settingKey] = currentChannel.id;
-    
+
+    const slots = [
+        { idKey: "channelId1",  enableKey: "channel1Enabled"  },
+        { idKey: "channelId2",  enableKey: "channel2Enabled"  },
+        { idKey: "channelId3",  enableKey: "channel3Enabled"  },
+        { idKey: "channelId4",  enableKey: "channel4Enabled"  },
+        { idKey: "channelId5",  enableKey: "channel5Enabled"  },
+        { idKey: "channelId6",  enableKey: "channel6Enabled"  },
+        { idKey: "channelId7",  enableKey: "channel7Enabled"  },
+        { idKey: "channelId8",  enableKey: "channel8Enabled"  },
+        { idKey: "channelId9",  enableKey: "channel9Enabled"  },
+        { idKey: "channelId10", enableKey: "channel10Enabled" }
+    ];
+
+    // Check if channel is already added
+    for (let i = 0; i < slots.length; i++) {
+        const existingId = settings.store[slots[i].idKey as keyof typeof settings.store] as string;
+        if (existingId === currentChannel.id) {
+            showToast(`Channel already added as Slot ${i + 1}!`, Toasts.Type.FAILURE);
+            return;
+        }
+    }
+
+    // Find first empty slot
+    const emptySlot = slots.findIndex(s => {
+        const id = settings.store[s.idKey as keyof typeof settings.store] as string;
+        return !id || id.trim() === "";
+    });
+
+    if (emptySlot === -1) {
+        showToast("All 10 channel slots are full! Remove one in Settings first.", Toasts.Type.FAILURE);
+        return;
+    }
+
+    const slotNum = emptySlot + 1;
+    settings.store[slots[emptySlot].idKey as keyof typeof settings.store] = currentChannel.id;
+    settings.store[slots[emptySlot].enableKey as keyof typeof settings.store] = true;
+
     const displayName = getChannelDisplayName(currentChannel.id);
-    showToast(`Channel ${channelNumber} set to: ${displayName}`, Toasts.Type.SUCCESS);
-    console.log(`[AutoMessageSender] Channel ${channelNumber} set to: ${displayName} (${currentChannel.id})`);
+    showToast(`✅ Channel added to Slot ${slotNum}: ${displayName}`, Toasts.Type.SUCCESS);
+    console.log(`[AutoMessageSender] Channel added to slot ${slotNum}: ${displayName} (${currentChannel.id})`);
 }
 
 function toggleChannel(channelNumber: number) {
@@ -707,7 +929,7 @@ function toggleChannel(channelNumber: number) {
 export default definePlugin({
     name: "AutoMessageSender",
     description: "Automatically sends a sequence of messages to multiple channels with rotation and verification detection",
-    longDescription: "AutoMessageSender allows you to set up automatic message sequences that are sent to up to 5 target Discord channels with automatic rotation every 10-20 minutes. Includes verification message detection with sound alerts and individual channel enable/disable toggles.",
+    longDescription: "AutoMessageSender allows you to set up automatic message sequences that are sent to up to 10 target Discord channels with automatic rotation. Includes verification message detection with sound alerts, auto-pause/resume on detection, and individual channel enable/disable toggles.",
     authors: [
         {
             name: "Ar7340",
@@ -719,24 +941,28 @@ export default definePlugin({
     flux: {
         MESSAGE_CREATE({ message }: { message: any }) {
             if (!settings.store.enableVerificationDetection) return;
-            
-            // Monitor all configured channels for verification messages
-            const channels = getActiveChannels();
-            if (channels.includes(message.channel_id)) {
-                if (checkForVerificationMessage(message)) {
-                    console.log("[AutoMessageSender] Verification message detected in channel:");
-                    console.log(`[AutoMessageSender] From: ${message.author?.username || "Unknown"}`);
-                    console.log(`[AutoMessageSender] Content: ${message.content}`);
-                    triggerAlert();
-                }
+            if (!isRunning && !isPaused) return; // only monitor while active
+
+            // Only alert if the message is in the channel we're currently sending to
+            const currentChannelId = getCurrentChannelId();
+            if (!currentChannelId || message.channel_id !== currentChannelId) return;
+
+            const result = checkForVerificationMessage(message);
+            if (result.detected) {
+                const authorName = message.author?.global_name || message.author?.username || "Unknown";
+                console.log("[AutoMessageSender] Verification message detected in current channel:");
+                console.log(`[AutoMessageSender] From: ${authorName}`);
+                console.log(`[AutoMessageSender] Content: ${message.content}`);
+                if (result.userId) console.log(`[AutoMessageSender] Targeted user ID: ${result.userId}`);
+                triggerAlert(result.userId, authorName);
             }
         }
     },
     
     start() {
         console.log("[AutoMessageSender] Plugin loaded!");
-        console.log("[AutoMessageSender] Verification detection enabled");
-        console.log("[AutoMessageSender] Supports up to 5 channels with enable/disable toggles");
+        console.log("[AutoMessageSender] Verification detection enabled — PAUSES on alert, resumes on dismiss");
+        console.log("[AutoMessageSender] Supports up to 10 channels with enable/disable toggles");
         console.log("[AutoMessageSender] Right-click any channel to see Auto Message options");
         console.log("[AutoMessageSender] Developer: Ar7340 | Discord ID: 1321782566763892748");
         console.log("[AutoMessageSender] Repository: https://github.com/Ar7340/Discord-Auto-Messages-Vencord");
@@ -777,191 +1003,118 @@ export default definePlugin({
                     />
                     <Menu.MenuSeparator />
                     <Menu.MenuItem
-                        id="auto-message-set-channel-1"
-                        label="📍 Set As Channel 1"
-                        action={() => setCurrentChannel(1)}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-toggle-channel-1"
-                        label={`${settings.store.channel1Enabled ? "✅" : "❌"} Toggle Channel 1`}
-                        disabled={!settings.store.channelId1}
-                        action={() => toggleChannel(1)}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-set-channel-2"
-                        label="📍 Set As Channel 2"
-                        action={() => setCurrentChannel(2)}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-toggle-channel-2"
-                        label={`${settings.store.channel2Enabled ? "✅" : "❌"} Toggle Channel 2`}
-                        disabled={!settings.store.channelId2}
-                        action={() => toggleChannel(2)}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-set-channel-3"
-                        label="📍 Set As Channel 3"
-                        action={() => setCurrentChannel(3)}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-toggle-channel-3"
-                        label={`${settings.store.channel3Enabled ? "✅" : "❌"} Toggle Channel 3`}
-                        disabled={!settings.store.channelId3}
-                        action={() => toggleChannel(3)}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-set-channel-4"
-                        label="📍 Set As Channel 4"
-                        action={() => setCurrentChannel(4)}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-toggle-channel-4"
-                        label={`${settings.store.channel4Enabled ? "✅" : "❌"} Toggle Channel 4`}
-                        disabled={!settings.store.channelId4}
-                        action={() => toggleChannel(4)}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-set-channel-5"
-                        label="📍 Set As Channel 5"
-                        action={() => setCurrentChannel(5)}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-toggle-channel-5"
-                        label={`${settings.store.channel5Enabled ? "✅" : "❌"} Toggle Channel 5`}
-                        disabled={!settings.store.channelId5}
-                        action={() => toggleChannel(5)}
-                    />
+                        id="auto-message-channels"
+                        label="📋 Channels"
+                    >
+                        {[
+                            { idKey: "channelId1"  as const, enableKey: "channel1Enabled"  as const, num: 1  },
+                            { idKey: "channelId2"  as const, enableKey: "channel2Enabled"  as const, num: 2  },
+                            { idKey: "channelId3"  as const, enableKey: "channel3Enabled"  as const, num: 3  },
+                            { idKey: "channelId4"  as const, enableKey: "channel4Enabled"  as const, num: 4  },
+                            { idKey: "channelId5"  as const, enableKey: "channel5Enabled"  as const, num: 5  },
+                            { idKey: "channelId6"  as const, enableKey: "channel6Enabled"  as const, num: 6  },
+                            { idKey: "channelId7"  as const, enableKey: "channel7Enabled"  as const, num: 7  },
+                            { idKey: "channelId8"  as const, enableKey: "channel8Enabled"  as const, num: 8  },
+                            { idKey: "channelId9"  as const, enableKey: "channel9Enabled"  as const, num: 9  },
+                            { idKey: "channelId10" as const, enableKey: "channel10Enabled" as const, num: 10 }
+                        ].map(({ idKey, enableKey, num }) => {
+                            const channelId = settings.store[idKey];
+                            if (!channelId || channelId.trim() === "") return null;
+                            const enabled = settings.store[enableKey];
+                            const name = getChannelDisplayName(channelId);
+                            return (
+                                <Menu.MenuItem
+                                    key={`ch-${num}`}
+                                    id={`auto-message-channel-${num}`}
+                                    label={`${enabled ? "✅" : "❌"} Slot ${num}: ${name}`}
+                                    action={() => toggleChannel(num)}
+                                />
+                            );
+                        })}
+                        <Menu.MenuSeparator />
+                        <Menu.MenuItem
+                            id="auto-message-add-channel"
+                            label={(() => {
+                                const slots = ["channelId1","channelId2","channelId3","channelId4","channelId5","channelId6","channelId7","channelId8","channelId9","channelId10"] as const;
+                                const filled = slots.filter(k => settings.store[k] && settings.store[k].trim() !== "").length;
+                                return filled >= 10 ? "🚫 All Slots Full (10/10)" : `➕ Add Current Channel (${filled}/10)`;
+                            })()}
+                            disabled={(() => {
+                                const slots = ["channelId1","channelId2","channelId3","channelId4","channelId5","channelId6","channelId7","channelId8","channelId9","channelId10"] as const;
+                                return slots.every(k => settings.store[k] && settings.store[k].trim() !== "");
+                            })()}
+                            action={() => addCurrentChannel()}
+                        />
+                    </Menu.MenuItem>
                     <Menu.MenuSeparator />
                     <Menu.MenuItem
-                        id="auto-message-goto-channel-1"
-                        label="🔗 Go To Channel 1"
-                        disabled={!settings.store.channelId1}
-                        action={() => {
-                            const targetChannel = ChannelStore.getChannel(settings.store.channelId1);
-                            if (!targetChannel) {
-                                showToast("Channel 1 not found!", Toasts.Type.FAILURE);
-                                return;
-                            }
-                            
-                            const guildId = targetChannel.guild_id;
-                            if (guildId) {
-                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId1}`);
-                            } else {
-                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId1}`);
-                            }
-                            
-                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId1)}`, Toasts.Type.SUCCESS);
-                        }}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-goto-channel-2"
-                        label="🔗 Go To Channel 2"
-                        disabled={!settings.store.channelId2}
-                        action={() => {
-                            const targetChannel = ChannelStore.getChannel(settings.store.channelId2);
-                            if (!targetChannel) {
-                                showToast("Channel 2 not found!", Toasts.Type.FAILURE);
-                                return;
-                            }
-                            
-                            const guildId = targetChannel.guild_id;
-                            if (guildId) {
-                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId2}`);
-                            } else {
-                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId2}`);
-                            }
-                            
-                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId2)}`, Toasts.Type.SUCCESS);
-                        }}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-goto-channel-3"
-                        label="🔗 Go To Channel 3"
-                        disabled={!settings.store.channelId3}
-                        action={() => {
-                            const targetChannel = ChannelStore.getChannel(settings.store.channelId3);
-                            if (!targetChannel) {
-                                showToast("Channel 3 not found!", Toasts.Type.FAILURE);
-                                return;
-                            }
-                            
-                            const guildId = targetChannel.guild_id;
-                            if (guildId) {
-                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId3}`);
-                            } else {
-                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId3}`);
-                            }
-                            
-                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId3)}`, Toasts.Type.SUCCESS);
-                        }}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-goto-channel-4"
-                        label="🔗 Go To Channel 4"
-                        disabled={!settings.store.channelId4}
-                        action={() => {
-                            const targetChannel = ChannelStore.getChannel(settings.store.channelId4);
-                            if (!targetChannel) {
-                                showToast("Channel 4 not found!", Toasts.Type.FAILURE);
-                                return;
-                            }
-                            
-                            const guildId = targetChannel.guild_id;
-                            if (guildId) {
-                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId4}`);
-                            } else {
-                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId4}`);
-                            }
-                            
-                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId4)}`, Toasts.Type.SUCCESS);
-                        }}
-                    />
-                    <Menu.MenuItem
-                        id="auto-message-goto-channel-5"
-                        label="🔗 Go To Channel 5"
-                        disabled={!settings.store.channelId5}
-                        action={() => {
-                            const targetChannel = ChannelStore.getChannel(settings.store.channelId5);
-                            if (!targetChannel) {
-                                showToast("Channel 5 not found!", Toasts.Type.FAILURE);
-                                return;
-                            }
-                            
-                            const guildId = targetChannel.guild_id;
-                            if (guildId) {
-                                NavigationRouter.transitionTo(`/channels/${guildId}/${settings.store.channelId5}`);
-                            } else {
-                                NavigationRouter.transitionTo(`/channels/@me/${settings.store.channelId5}`);
-                            }
-                            
-                            showToast(`Navigating to: ${getChannelDisplayName(settings.store.channelId5)}`, Toasts.Type.SUCCESS);
-                        }}
-                    />
+                        id="auto-message-goto-channels"
+                        label="🔗 Go To Channel"
+                    >
+                        {[
+                            { idKey: "channelId1"  as const, num: 1  },
+                            { idKey: "channelId2"  as const, num: 2  },
+                            { idKey: "channelId3"  as const, num: 3  },
+                            { idKey: "channelId4"  as const, num: 4  },
+                            { idKey: "channelId5"  as const, num: 5  },
+                            { idKey: "channelId6"  as const, num: 6  },
+                            { idKey: "channelId7"  as const, num: 7  },
+                            { idKey: "channelId8"  as const, num: 8  },
+                            { idKey: "channelId9"  as const, num: 9  },
+                            { idKey: "channelId10" as const, num: 10 }
+                        ].map(({ idKey, num }) => {
+                            const channelId = settings.store[idKey];
+                            if (!channelId || channelId.trim() === "") return null;
+                            return (
+                                <Menu.MenuItem
+                                    key={`goto-${num}`}
+                                    id={`auto-message-goto-channel-${num}`}
+                                    label={`Slot ${num}: ${getChannelDisplayName(channelId)}`}
+                                    action={() => {
+                                        const targetChannel = ChannelStore.getChannel(channelId);
+                                        if (!targetChannel) {
+                                            showToast(`Slot ${num} channel not found!`, Toasts.Type.FAILURE);
+                                            return;
+                                        }
+                                        const guildId = targetChannel.guild_id;
+                                        if (guildId) {
+                                            NavigationRouter.transitionTo(`/channels/${guildId}/${channelId}`);
+                                        } else {
+                                            NavigationRouter.transitionTo(`/channels/@me/${channelId}`);
+                                        }
+                                        showToast(`Navigating to: ${getChannelDisplayName(channelId)}`, Toasts.Type.SUCCESS);
+                                    }}
+                                />
+                            );
+                        })}
+                    </Menu.MenuItem>
+
                     <Menu.MenuSeparator />
                     <Menu.MenuItem
                         id="auto-message-status"
-                        label={`Status: ${isRunning ? "🟢 Running" : "🔴 Stopped"}`}
+                        label={`Status: ${isRunning ? (isPaused ? "⏸️ Paused" : "🟢 Running") : "🔴 Stopped"}`}
                         action={() => {
-                            const channels = getActiveChannels();
-                            const channelList = channels.map((id, i) => {
-                                return `${i + 1}. ${getChannelDisplayName(id)}`;
-                            }).join("\n");
-                            
                             const allChannels = [
-                                { id: settings.store.channelId1, enabled: settings.store.channel1Enabled, num: 1 },
-                                { id: settings.store.channelId2, enabled: settings.store.channel2Enabled, num: 2 },
-                                { id: settings.store.channelId3, enabled: settings.store.channel3Enabled, num: 3 },
-                                { id: settings.store.channelId4, enabled: settings.store.channel4Enabled, num: 4 },
-                                { id: settings.store.channelId5, enabled: settings.store.channel5Enabled, num: 5 }
+                                { id: settings.store.channelId1,  enabled: settings.store.channel1Enabled,  num: 1  },
+                                { id: settings.store.channelId2,  enabled: settings.store.channel2Enabled,  num: 2  },
+                                { id: settings.store.channelId3,  enabled: settings.store.channel3Enabled,  num: 3  },
+                                { id: settings.store.channelId4,  enabled: settings.store.channel4Enabled,  num: 4  },
+                                { id: settings.store.channelId5,  enabled: settings.store.channel5Enabled,  num: 5  },
+                                { id: settings.store.channelId6,  enabled: settings.store.channel6Enabled,  num: 6  },
+                                { id: settings.store.channelId7,  enabled: settings.store.channel7Enabled,  num: 7  },
+                                { id: settings.store.channelId8,  enabled: settings.store.channel8Enabled,  num: 8  },
+                                { id: settings.store.channelId9,  enabled: settings.store.channel9Enabled,  num: 9  },
+                                { id: settings.store.channelId10, enabled: settings.store.channel10Enabled, num: 10 }
                             ].filter(ch => ch.id && ch.id.trim() !== "");
-                            
+
                             const statusList = allChannels.map(ch => {
                                 const status = ch.enabled ? "✅" : "❌";
-                                return `${status} Ch ${ch.num}: ${getChannelDisplayName(ch.id)}`;
+                                return `${status} Slot ${ch.num}: ${getChannelDisplayName(ch.id)}`;
                             }).join("\n");
-                            
+
+                            const runState = isRunning ? (isPaused ? "Paused (alert)" : "Running") : "Stopped";
                             showToast(
-                                `Status: ${isRunning ? "Running" : "Stopped"}\n\n${statusList || "No channels configured"}\n\nMessage Delay: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s\nRotation: ${settings.store.minChannelRotationMinutes}-${settings.store.maxChannelRotationMinutes} min\nVerification Detection: ${settings.store.enableVerificationDetection ? "ON" : "OFF"}`,
+                                `Status: ${runState}\n\n${statusList || "No channels configured"}\n\nMessage Delay: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s\nRotation: ${settings.store.minChannelRotationMinutes}-${settings.store.maxChannelRotationMinutes} min\nVerification Detection: ${settings.store.enableVerificationDetection ? "ON" : "OFF"}`,
                                 Toasts.Type.MESSAGE
                             );
                         }}
