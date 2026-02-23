@@ -316,11 +316,16 @@ function playAlertSound() {
     };
 }
 
-function triggerAlert(detectedUserId: string = "", detectedUsername: string = "") {
+function triggerAlert(detectedUserId: string = "", detectedUsername: string = "", reason: "verification" | "neon-catchlist" = "verification") {
     if (isAlertActive) return; // Don't trigger multiple alerts
 
-    console.log("[AutoMessageSender] 🚨 VERIFICATION MESSAGE DETECTED IN CHANNEL! 🚨");
-    console.log("[AutoMessageSender] Someone in the channel received a verification warning!");
+    if (reason === "neon-catchlist") {
+        console.log("[AutoMessageSender] 🎣 NEON CATCHLIST MESSAGE DETECTED IN CHANNEL! 🎣");
+        console.log("[AutoMessageSender] A rare catch was detected — pausing auto-messages!");
+    } else {
+        console.log("[AutoMessageSender] 🚨 VERIFICATION MESSAGE DETECTED IN CHANNEL! 🚨");
+        console.log("[AutoMessageSender] Someone in the channel received a verification warning!");
+    }
     if (detectedUserId) {
         console.log(`[AutoMessageSender] Detected user ID: ${detectedUserId}`);
     }
@@ -350,9 +355,11 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
         }
         if (timerElement) {
             timerElement.style.background = "linear-gradient(135deg, #ff6b35 0%, #cc0000 100%)";
-            timerElement.innerHTML = `⏸️ PAUSED — Verification detected!<br><span style="font-size: 12px; opacity: 0.8;">Dismiss the alert to resume</span>`;
+            const pauseLabel = reason === "neon-catchlist" ? "🎣 PAUSED — Rare catch detected!" : "⏸️ PAUSED — Verification detected!";
+            timerElement.innerHTML = `${pauseLabel}<br><span style="font-size: 12px; opacity: 0.8;">Dismiss the alert to resume</span>`;
         }
-        console.log("[AutoMessageSender] Auto-messages PAUSED due to verification alert");
+        const pauseReason = reason === "neon-catchlist" ? "neon catchlist detection" : "verification alert";
+        console.log(`[AutoMessageSender] Auto-messages PAUSED due to ${pauseReason}`);
     }
 
     // Play alert sound (loops continuously until manually stopped)
@@ -360,9 +367,25 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
 
     // Show alert button with detected user info
     const button = createAlertButton();
+
+    // Update button icon/title for neon-catchlist vs verification
+    const iconDiv2 = button.querySelector("div:first-child") as HTMLElement;
+    if (iconDiv2) iconDiv2.textContent = reason === "neon-catchlist" ? "🎣" : "⚠️";
+    const titleDiv = button.querySelector("div:nth-child(2)") as HTMLElement;
+    if (titleDiv) titleDiv.textContent = reason === "neon-catchlist" ? "NEON CATCHLIST ALERT!" : "VERIFICATION ALERT!";
+    if (reason === "neon-catchlist") {
+        button.style.background = "linear-gradient(135deg, #00b4d8 0%, #0077b6 100%)";
+        button.style.boxShadow = "0 8px 30px rgba(0, 180, 216, 0.5)";
+    } else {
+        button.style.background = "linear-gradient(135deg, #ff0000 0%, #cc0000 100%)";
+        button.style.boxShadow = "0 8px 30px rgba(255, 0, 0, 0.5)";
+    }
+
     const userLine = button.querySelector("#alert-user-line") as HTMLElement;
     if (userLine) {
-        if (detectedUserId && detectedUsername && detectedUsername !== "Unknown") {
+        if (reason === "neon-catchlist") {
+            userLine.textContent = "🐟 A rare catch was listed — check it out!";
+        } else if (detectedUserId && detectedUsername && detectedUsername !== "Unknown") {
             userLine.textContent = `⚠️ ${detectedUsername} (${detectedUserId}) received a verification!`;
         } else if (detectedUserId) {
             userLine.textContent = `⚠️ User ${detectedUserId} received a verification!`;
@@ -375,14 +398,20 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
     button.style.display = "block";
 
     // Build toast text
-    const who = detectedUsername && detectedUsername !== "Unknown"
-        ? `${detectedUsername}${detectedUserId ? ` (${detectedUserId})` : ""}`
-        : detectedUserId || "Unknown user";
-
-    showToast(
-        `⚠️ VERIFICATION DETECTED! ${who} — Auto-messages PAUSED. Dismiss alert to resume.`,
-        Toasts.Type.FAILURE
-    );
+    if (reason === "neon-catchlist") {
+        showToast(
+            `🎣 NEON CATCHLIST DETECTED! Rare catch incoming — Auto-messages PAUSED. Dismiss to resume.`,
+            Toasts.Type.FAILURE
+        );
+    } else {
+        const who = detectedUsername && detectedUsername !== "Unknown"
+            ? `${detectedUsername}${detectedUserId ? ` (${detectedUserId})` : ""}`
+            : detectedUserId || "Unknown user";
+        showToast(
+            `⚠️ VERIFICATION DETECTED! ${who} — Auto-messages PAUSED. Dismiss alert to resume.`,
+            Toasts.Type.FAILURE
+        );
+    }
 }
 
 function stopAlert() {
@@ -499,6 +528,30 @@ function checkForVerificationMessage(message: any): { detected: boolean; userId:
     }
 
     return { detected, userId };
+}
+
+function checkForNeonCatchlist(message: any): boolean {
+    const TRIGGER = 'Use "neon catchlist" to see a list of your rare catches';
+
+    // Check plain text content
+    if (message.content && message.content.includes(TRIGGER)) return true;
+
+    // Check embeds (description, fields, footer, title)
+    if (Array.isArray(message.embeds)) {
+        for (const embed of message.embeds) {
+            if (embed.description && embed.description.includes(TRIGGER)) return true;
+            if (embed.title && embed.title.includes(TRIGGER)) return true;
+            if (embed.footer?.text && embed.footer.text.includes(TRIGGER)) return true;
+            if (Array.isArray(embed.fields)) {
+                for (const field of embed.fields) {
+                    if ((field.value && field.value.includes(TRIGGER)) ||
+                        (field.name && field.name.includes(TRIGGER))) return true;
+                }
+            }
+        }
+    }
+
+    return false;
 }
 
 function startCountdown(totalSeconds: number) {
@@ -782,6 +835,63 @@ async function sendMessages() {
     console.log(`[AutoMessageSender] Sequence complete. Next cycle in ${settings.store.minIntervalSeconds}-${settings.store.maxIntervalSeconds} seconds (random).`);
 }
 
+function manualPause() {
+    if (!isRunning) {
+        showToast("Auto-messages are not running.", Toasts.Type.MESSAGE);
+        return;
+    }
+    if (isPaused) {
+        showToast("Already paused.", Toasts.Type.MESSAGE);
+        return;
+    }
+    isPaused = true;
+    if (intervalId) { clearTimeout(intervalId); intervalId = null; }
+    if (countdownId) { clearInterval(countdownId); countdownId = null; }
+    if (channelRotationId) { clearTimeout(channelRotationId); channelRotationId = null; }
+    if (channelRotationCountdownId) { clearInterval(channelRotationCountdownId); channelRotationCountdownId = null; }
+    if (timerElement) {
+        timerElement.style.background = "linear-gradient(135deg, #f39c12 0%, #d68910 100%)";
+        timerElement.innerHTML = `⏸️ MANUALLY PAUSED<br><span style="font-size: 12px; opacity: 0.8;">Right-click → Resume to continue</span>`;
+    }
+    showToast("⏸️ Auto-messages manually paused.", Toasts.Type.MESSAGE);
+    console.log("[AutoMessageSender] Auto-messages manually paused.");
+}
+
+function manualResume() {
+    if (!isRunning) {
+        showToast("Auto-messages are not running. Start them first.", Toasts.Type.MESSAGE);
+        return;
+    }
+    if (!isPaused) {
+        showToast("Auto-messages are not paused.", Toasts.Type.MESSAGE);
+        return;
+    }
+    isPaused = false;
+
+    if (timerElement) {
+        timerElement.style.background = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+    }
+
+    const channels = getActiveChannels();
+    if (channels.length > 1) {
+        scheduleChannelRotation();
+    }
+
+    const resumeLoop = () => {
+        const randomDelay = getRandomInterval();
+        console.log(`[AutoMessageSender] (Manual resume) Next message in ${randomDelay} seconds...`);
+        startCountdown(randomDelay);
+        intervalId = setTimeout(() => {
+            sendMessages();
+            resumeLoop();
+        }, randomDelay * 1000);
+    };
+
+    resumeLoop();
+    showToast("▶️ Auto-messages manually resumed!", Toasts.Type.SUCCESS);
+    console.log("[AutoMessageSender] Auto-messages manually resumed.");
+}
+
 function startMessageLoop() {
     if (intervalId || isRunning) {
         showToast("Auto message sender is already running!", Toasts.Type.MESSAGE);
@@ -954,7 +1064,13 @@ export default definePlugin({
                 console.log(`[AutoMessageSender] From: ${authorName}`);
                 console.log(`[AutoMessageSender] Content: ${message.content}`);
                 if (result.userId) console.log(`[AutoMessageSender] Targeted user ID: ${result.userId}`);
-                triggerAlert(result.userId, authorName);
+                triggerAlert(result.userId, authorName, "verification");
+                return;
+            }
+
+            if (checkForNeonCatchlist(message)) {
+                console.log("[AutoMessageSender] 🎣 Neon catchlist message detected in current channel!");
+                triggerAlert("", "", "neon-catchlist");
             }
         }
     },
@@ -998,6 +1114,18 @@ export default definePlugin({
                                 stopMessageLoop();
                             } else {
                                 startMessageLoop();
+                            }
+                        }}
+                    />
+                    <Menu.MenuItem
+                        id="auto-message-pause"
+                        label={isPaused ? "▶️ Resume Auto Messages" : "⏸️ Pause Auto Messages"}
+                        disabled={!isRunning}
+                        action={() => {
+                            if (isPaused) {
+                                manualResume();
+                            } else {
+                                manualPause();
                             }
                         }}
                     />
