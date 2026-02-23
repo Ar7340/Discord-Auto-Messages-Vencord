@@ -8,7 +8,7 @@ import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
-import { Button, ChannelStore, GuildStore, Menu, NavigationRouter, showToast, Toasts } from "@webpack/common";
+import { Button, ChannelStore, GuildStore, Menu, NavigationRouter, showToast, Toasts, UserStore } from "@webpack/common";
 
 const MessageActions = findByPropsLazy("sendMessage");
 
@@ -316,12 +316,15 @@ function playAlertSound() {
     };
 }
 
-function triggerAlert(detectedUserId: string = "", detectedUsername: string = "", reason: "verification" | "neon-catchlist" = "verification") {
+function triggerAlert(detectedUserId: string = "", detectedUsername: string = "", reason: "verification" | "neon-catchlist" | "other-user" = "verification") {
     if (isAlertActive) return; // Don't trigger multiple alerts
 
     if (reason === "neon-catchlist") {
         console.log("[AutoMessageSender] 🎣 NEON CATCHLIST MESSAGE DETECTED IN CHANNEL! 🎣");
         console.log("[AutoMessageSender] A rare catch was detected — pausing auto-messages!");
+    } else if (reason === "other-user") {
+        console.log("[AutoMessageSender] 👤 OTHER USER MESSAGE DETECTED IN CHANNEL!");
+        if (detectedUsername) console.log(`[AutoMessageSender] From: ${detectedUsername}`);
     } else {
         console.log("[AutoMessageSender] 🚨 VERIFICATION MESSAGE DETECTED IN CHANNEL! 🚨");
         console.log("[AutoMessageSender] Someone in the channel received a verification warning!");
@@ -355,10 +358,14 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
         }
         if (timerElement) {
             timerElement.style.background = "linear-gradient(135deg, #ff6b35 0%, #cc0000 100%)";
-            const pauseLabel = reason === "neon-catchlist" ? "🎣 PAUSED — Rare catch detected!" : "⏸️ PAUSED — Verification detected!";
+            const pauseLabel = reason === "neon-catchlist"
+                ? "🎣 PAUSED — Rare catch detected!"
+                : reason === "other-user"
+                    ? "👤 PAUSED — Other user active!"
+                    : "⏸️ PAUSED — Verification detected!";
             timerElement.innerHTML = `${pauseLabel}<br><span style="font-size: 12px; opacity: 0.8;">Dismiss the alert to resume</span>`;
         }
-        const pauseReason = reason === "neon-catchlist" ? "neon catchlist detection" : "verification alert";
+        const pauseReason = reason === "neon-catchlist" ? "neon catchlist detection" : reason === "other-user" ? "other user activity" : "verification alert";
         console.log(`[AutoMessageSender] Auto-messages PAUSED due to ${pauseReason}`);
     }
 
@@ -368,14 +375,17 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
     // Show alert button with detected user info
     const button = createAlertButton();
 
-    // Update button icon/title for neon-catchlist vs verification
+    // Update button icon/title for neon-catchlist vs verification vs other-user
     const iconDiv2 = button.querySelector("div:first-child") as HTMLElement;
-    if (iconDiv2) iconDiv2.textContent = reason === "neon-catchlist" ? "🎣" : "⚠️";
+    if (iconDiv2) iconDiv2.textContent = reason === "neon-catchlist" ? "🎣" : reason === "other-user" ? "👤" : "⚠️";
     const titleDiv = button.querySelector("div:nth-child(2)") as HTMLElement;
-    if (titleDiv) titleDiv.textContent = reason === "neon-catchlist" ? "NEON CATCHLIST ALERT!" : "VERIFICATION ALERT!";
+    if (titleDiv) titleDiv.textContent = reason === "neon-catchlist" ? "NEON CATCHLIST ALERT!" : reason === "other-user" ? "OTHER USER DETECTED!" : "VERIFICATION ALERT!";
     if (reason === "neon-catchlist") {
         button.style.background = "linear-gradient(135deg, #00b4d8 0%, #0077b6 100%)";
         button.style.boxShadow = "0 8px 30px rgba(0, 180, 216, 0.5)";
+    } else if (reason === "other-user") {
+        button.style.background = "linear-gradient(135deg, #f39c12 0%, #d68910 100%)";
+        button.style.boxShadow = "0 8px 30px rgba(243, 156, 18, 0.5)";
     } else {
         button.style.background = "linear-gradient(135deg, #ff0000 0%, #cc0000 100%)";
         button.style.boxShadow = "0 8px 30px rgba(255, 0, 0, 0.5)";
@@ -385,6 +395,12 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
     if (userLine) {
         if (reason === "neon-catchlist") {
             userLine.textContent = "🐟 A rare catch was listed — check it out!";
+        } else if (reason === "other-user") {
+            if (detectedUsername && detectedUsername !== "Unknown") {
+                userLine.textContent = `👤 ${detectedUsername} sent a message in the channel!`;
+            } else {
+                userLine.textContent = "👤 Someone else sent a message in the channel!";
+            }
         } else if (detectedUserId && detectedUsername && detectedUsername !== "Unknown") {
             userLine.textContent = `⚠️ ${detectedUsername} (${detectedUserId}) received a verification!`;
         } else if (detectedUserId) {
@@ -401,6 +417,12 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
     if (reason === "neon-catchlist") {
         showToast(
             `🎣 NEON CATCHLIST DETECTED! Rare catch incoming — Auto-messages PAUSED. Dismiss to resume.`,
+            Toasts.Type.FAILURE
+        );
+    } else if (reason === "other-user") {
+        const who = detectedUsername && detectedUsername !== "Unknown" ? detectedUsername : "Someone";
+        showToast(
+            `👤 OTHER USER DETECTED! ${who} sent a message — Auto-messages PAUSED. Dismiss to resume.`,
             Toasts.Type.FAILURE
         );
     } else {
@@ -552,6 +574,36 @@ function checkForNeonCatchlist(message: any): boolean {
     }
 
     return false;
+}
+
+function checkForOtherUserMessage(message: any, myUserId: string): boolean {
+    // Ignore messages from ourselves
+    if (!message.author || message.author.id === myUserId) return false;
+    // Ignore bots
+    if (message.author.bot) return false;
+
+    const raw: string = (message.content || "").trim();
+
+    // Build ignore list from settings (comma-separated, case-insensitive, trimmed)
+    const ignoreRaw = settings.store.otherUserIgnoreList || "";
+    const ignoreList = ignoreRaw
+        .split(",")
+        .map((s: string) => s.trim().toLowerCase())
+        .filter((s: string) => s.length > 0);
+
+    const rawLower = raw.toLowerCase();
+
+    // If the full message exactly matches an ignored phrase → skip
+    if (ignoreList.includes(rawLower)) return false;
+
+    // If the message STARTS with an ignored phrase followed by nothing or just spaces → skip
+    for (const ignored of ignoreList) {
+        if (rawLower === ignored) return false;
+        // also allow slight variations like "owoh " with trailing space
+        if (rawLower.startsWith(ignored) && rawLower.slice(ignored.length).trim() === "") return false;
+    }
+
+    return true; // Someone else sent a non-ignored message → alert!
 }
 
 function startCountdown(totalSeconds: number) {
@@ -769,6 +821,16 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         description: "Enable automatic detection of verification messages",
         default: true
+    },
+    enableOtherUserDetection: {
+        type: OptionType.BOOLEAN,
+        description: "Alert when another user sends a message in the channel (ignores OWO-bot-style commands)",
+        default: true
+    },
+    otherUserIgnoreList: {
+        type: OptionType.STRING,
+        description: "Comma-separated messages to IGNORE (won't alert). Add your own. Example: owo, owoh, owob, wh",
+        default: "owo, owoh, owob, wh, wb, gh, gb, owo h, owo b, w h, w b, wpiku, owopiku, wpup, owopup, owo hunt, owo battle, owo gamble, owo fish, owo pray, owo run, owo zap, owo loot"
     }
 });
 
@@ -1071,6 +1133,18 @@ export default definePlugin({
             if (checkForNeonCatchlist(message)) {
                 console.log("[AutoMessageSender] 🎣 Neon catchlist message detected in current channel!");
                 triggerAlert("", "", "neon-catchlist");
+                return;
+            }
+
+            // Check if another real user (non-bot, not us) sent any non-ignored message
+            if (settings.store.enableOtherUserDetection) {
+                const myUser = UserStore.getCurrentUser();
+                const myId = myUser?.id ?? "";
+                if (checkForOtherUserMessage(message, myId)) {
+                    const authorName = message.author?.global_name || message.author?.username || "Unknown";
+                    console.log(`[AutoMessageSender] 👤 Other user message from ${authorName}: "${message.content}"`);
+                    triggerAlert("", authorName, "other-user");
+                }
             }
         }
     },
