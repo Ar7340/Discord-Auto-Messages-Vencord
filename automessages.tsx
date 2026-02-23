@@ -582,6 +582,14 @@ function checkForOtherUserMessage(message: any, myUserId: string): boolean {
     // Ignore bots
     if (message.author.bot) return false;
 
+    // Ignore specifically listed user IDs
+    const ignoreIdsRaw = settings.store.otherUserIgnoreUserIds || "";
+    const ignoreIds = ignoreIdsRaw
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0);
+    if (ignoreIds.includes(message.author.id)) return false;
+
     const raw: string = (message.content || "").trim();
 
     // Build ignore list from settings (comma-separated, case-insensitive, trimmed)
@@ -831,6 +839,11 @@ const settings = definePluginSettings({
         type: OptionType.STRING,
         description: "Comma-separated messages to IGNORE (won't alert). Add your own. Example: owo, owoh, owob, wh",
         default: "owo, owoh, owob, wh, wb, gh, gb, owo h, owo b, w h, w b, wpiku, owopiku, wpup, owopup, owo hunt, owo battle, owo gamble, owo fish, owo pray, owo run, owo zap, owo loot"
+    },
+    otherUserIgnoreUserIds: {
+        type: OptionType.STRING,
+        description: "Comma-separated user IDs to IGNORE (their messages will never trigger an alert). Add more as needed.",
+        default: "507962222132068362, 767671131032518687"
     }
 });
 
