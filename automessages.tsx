@@ -316,7 +316,7 @@ function playAlertSound() {
     };
 }
 
-function triggerAlert(detectedUserId: string = "", detectedUsername: string = "", reason: "verification" | "neon-catchlist" | "other-user" = "verification") {
+function triggerAlert(detectedUserId: string = "", detectedUsername: string = "", reason: "verification" | "neon-catchlist" | "other-user" | "bot" = "verification") {
     if (isAlertActive) return; // Don't trigger multiple alerts
 
     if (reason === "neon-catchlist") {
@@ -325,6 +325,10 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
     } else if (reason === "other-user") {
         console.log("[AutoMessageSender] 👤 OTHER USER MESSAGE DETECTED IN CHANNEL!");
         if (detectedUsername) console.log(`[AutoMessageSender] From: ${detectedUsername}`);
+    } else if (reason === "bot") {
+        console.log("[AutoMessageSender] 🤖 BOT MESSAGE DETECTED IN CHANNEL!");
+        if (detectedUsername) console.log(`[AutoMessageSender] Bot: ${detectedUsername}`);
+        if (detectedUserId) console.log(`[AutoMessageSender] Bot ID: ${detectedUserId}`);
     } else {
         console.log("[AutoMessageSender] 🚨 VERIFICATION MESSAGE DETECTED IN CHANNEL! 🚨");
         console.log("[AutoMessageSender] Someone in the channel received a verification warning!");
@@ -362,10 +366,12 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
                 ? "🎣 PAUSED — Rare catch detected!"
                 : reason === "other-user"
                     ? "👤 PAUSED — Other user active!"
-                    : "⏸️ PAUSED — Verification detected!";
+                    : reason === "bot"
+                        ? "🤖 PAUSED — Bot message detected!"
+                        : "⏸️ PAUSED — Verification detected!";
             timerElement.innerHTML = `${pauseLabel}<br><span style="font-size: 12px; opacity: 0.8;">Dismiss the alert to resume</span>`;
         }
-        const pauseReason = reason === "neon-catchlist" ? "neon catchlist detection" : reason === "other-user" ? "other user activity" : "verification alert";
+        const pauseReason = reason === "neon-catchlist" ? "neon catchlist detection" : reason === "other-user" ? "other user activity" : reason === "bot" ? "bot message detection" : "verification alert";
         console.log(`[AutoMessageSender] Auto-messages PAUSED due to ${pauseReason}`);
     }
 
@@ -377,15 +383,18 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
 
     // Update button icon/title for neon-catchlist vs verification vs other-user
     const iconDiv2 = button.querySelector("div:first-child") as HTMLElement;
-    if (iconDiv2) iconDiv2.textContent = reason === "neon-catchlist" ? "🎣" : reason === "other-user" ? "👤" : "⚠️";
+    if (iconDiv2) iconDiv2.textContent = reason === "neon-catchlist" ? "🎣" : reason === "other-user" ? "👤" : reason === "bot" ? "🤖" : "⚠️";
     const titleDiv = button.querySelector("div:nth-child(2)") as HTMLElement;
-    if (titleDiv) titleDiv.textContent = reason === "neon-catchlist" ? "NEON CATCHLIST ALERT!" : reason === "other-user" ? "OTHER USER DETECTED!" : "VERIFICATION ALERT!";
+    if (titleDiv) titleDiv.textContent = reason === "neon-catchlist" ? "NEON CATCHLIST ALERT!" : reason === "other-user" ? "OTHER USER DETECTED!" : reason === "bot" ? "BOT MESSAGE DETECTED!" : "VERIFICATION ALERT!";
     if (reason === "neon-catchlist") {
         button.style.background = "linear-gradient(135deg, #00b4d8 0%, #0077b6 100%)";
         button.style.boxShadow = "0 8px 30px rgba(0, 180, 216, 0.5)";
     } else if (reason === "other-user") {
         button.style.background = "linear-gradient(135deg, #f39c12 0%, #d68910 100%)";
         button.style.boxShadow = "0 8px 30px rgba(243, 156, 18, 0.5)";
+    } else if (reason === "bot") {
+        button.style.background = "linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%)";
+        button.style.boxShadow = "0 8px 30px rgba(124, 58, 237, 0.5)";
     } else {
         button.style.background = "linear-gradient(135deg, #ff0000 0%, #cc0000 100%)";
         button.style.boxShadow = "0 8px 30px rgba(255, 0, 0, 0.5)";
@@ -400,6 +409,12 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
                 userLine.textContent = `👤 ${detectedUsername} sent a message in the channel!`;
             } else {
                 userLine.textContent = "👤 Someone else sent a message in the channel!";
+            }
+        } else if (reason === "bot") {
+            if (detectedUsername && detectedUsername !== "Unknown") {
+                userLine.textContent = `🤖 Bot "${detectedUsername}" sent a message in the channel!`;
+            } else {
+                userLine.textContent = "🤖 An unignored bot sent a message in the channel!";
             }
         } else if (detectedUserId && detectedUsername && detectedUsername !== "Unknown") {
             userLine.textContent = `⚠️ ${detectedUsername} (${detectedUserId}) received a verification!`;
@@ -423,6 +438,12 @@ function triggerAlert(detectedUserId: string = "", detectedUsername: string = ""
         const who = detectedUsername && detectedUsername !== "Unknown" ? detectedUsername : "Someone";
         showToast(
             `👤 OTHER USER DETECTED! ${who} sent a message — Auto-messages PAUSED. Dismiss to resume.`,
+            Toasts.Type.FAILURE
+        );
+    } else if (reason === "bot") {
+        const who = detectedUsername && detectedUsername !== "Unknown" ? detectedUsername : "A bot";
+        showToast(
+            `🤖 BOT DETECTED! ${who} sent a message — Auto-messages PAUSED. Dismiss to resume.`,
             Toasts.Type.FAILURE
         );
     } else {
@@ -612,6 +633,23 @@ function checkForOtherUserMessage(message: any, myUserId: string): boolean {
     }
 
     return true; // Someone else sent a non-ignored message → alert!
+}
+
+function checkForBotMessage(message: any): boolean {
+    // Only care about actual bots
+    if (!message.author || !message.author.bot) return false;
+
+    // Parse the ignore list from settings
+    const ignoreIdsRaw = settings.store.botIgnoreIds || "";
+    const ignoreIds = ignoreIdsRaw
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0);
+
+    // Skip bots whose IDs are in the ignore list
+    if (ignoreIds.includes(message.author.id)) return false;
+
+    return true; // An unignored bot sent a message → alert!
 }
 
 function startCountdown(totalSeconds: number) {
@@ -844,6 +882,16 @@ const settings = definePluginSettings({
         type: OptionType.STRING,
         description: "Comma-separated user IDs to IGNORE (their messages will never trigger an alert). Add more as needed.",
         default: "507962222132068362, 767671131032518687"
+    },
+    enableBotDetection: {
+        type: OptionType.BOOLEAN,
+        description: "Alert when a bot sends a message in the channel (ignores bots listed in Bot Ignore IDs)",
+        default: false
+    },
+    botIgnoreIds: {
+        type: OptionType.STRING,
+        description: "Comma-separated bot IDs to IGNORE (their messages will never trigger a bot alert). Example: 408785106942164992, 547905866255433758",
+        default: "408785106942164992, 547905866255433758"
     }
 });
 
@@ -1157,6 +1205,17 @@ export default definePlugin({
                     const authorName = message.author?.global_name || message.author?.username || "Unknown";
                     console.log(`[AutoMessageSender] 👤 Other user message from ${authorName}: "${message.content}"`);
                     triggerAlert("", authorName, "other-user");
+                    return;
+                }
+            }
+
+            // Check if an unignored bot sent a message
+            if (settings.store.enableBotDetection) {
+                if (checkForBotMessage(message)) {
+                    const botName = message.author?.global_name || message.author?.username || "Unknown Bot";
+                    const botId = message.author?.id ?? "";
+                    console.log(`[AutoMessageSender] 🤖 Unignored bot message from ${botName} (${botId}): "${message.content}"`);
+                    triggerAlert(botId, botName, "bot");
                 }
             }
         }
@@ -1329,7 +1388,7 @@ export default definePlugin({
 
                             const runState = isRunning ? (isPaused ? "Paused (alert)" : "Running") : "Stopped";
                             showToast(
-                                `Status: ${runState}\n\n${statusList || "No channels configured"}\n\nMessage Delay: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s\nRotation: ${settings.store.minChannelRotationMinutes}-${settings.store.maxChannelRotationMinutes} min\nVerification Detection: ${settings.store.enableVerificationDetection ? "ON" : "OFF"}`,
+                                `Status: ${runState}\n\n${statusList || "No channels configured"}\n\nMessage Delay: ${settings.store.minIntervalSeconds}s - ${settings.store.maxIntervalSeconds}s\nRotation: ${settings.store.minChannelRotationMinutes}-${settings.store.maxChannelRotationMinutes} min\nVerification Detection: ${settings.store.enableVerificationDetection ? "ON" : "OFF"}\nOther User Detection: ${settings.store.enableOtherUserDetection ? "ON" : "OFF"}\nBot Detection: ${settings.store.enableBotDetection ? "ON" : "OFF"}`,
                                 Toasts.Type.MESSAGE
                             );
                         }}
